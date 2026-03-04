@@ -1,6 +1,6 @@
 # Bridge Bank
 
-Automatically sync your Revolut transactions to [Actual Budget](https://actualbudget.org/) using [Enable Banking](https://enablebanking.com/).
+Automatically sync your bank transactions to [Actual Budget](https://actualbudget.org/) using [Enable Banking](https://enablebanking.com/).
 
 - Imports confirmed transactions as **cleared**
 - Imports pending transactions as **uncleared** -- categorise them immediately
@@ -31,8 +31,8 @@ Automatically sync your Revolut transactions to [Actual Budget](https://actualbu
 ### 2. Clone this repo
 
 ```bash
-git clone https://github.com/yourusername/bridgebank.git
-cd bridgebank
+git clone https://github.com/DAdjadj/bridge-bank.git
+cd bridge-bank
 ```
 
 ### 3. Add your private key
@@ -53,11 +53,11 @@ EB_APPLICATION_ID=your-app-id python3 dosetup.py
 
 The script will:
 1. Open an authorisation URL -- open it in your browser
-2. Log in to Revolut and approve access
+2. Log in to your bank and approve access
 3. Paste the redirect URL back into the terminal
 4. Save your session to `data/state.json`
 
-**For banks other than Revolut (Portugal):**
+**For banks other than Revolut:**
 
 ```bash
 EB_APPLICATION_ID=your-app-id \
@@ -79,6 +79,8 @@ ACTUAL_SYNC_ID: "your-sync-id"        # Settings > Show advanced settings > Sync
 ACTUAL_ACCOUNT: "Revolut"             # Name of the account in Actual Budget
 EB_APPLICATION_ID: "your-app-id"
 ```
+
+**Recommended:** set `ACCOUNT_HOLDER_NAME` to your name as it appears on bank transfers (e.g. `"John Doe,JOHN DOE"`). This ensures incoming transfers and card refunds show the correct payee instead of your own name.
 
 **If Actual Budget is on a Docker network**, uncomment the `networks` section and adjust to match your setup.
 
@@ -104,9 +106,9 @@ You should see:
 
 | Stage | What happens |
 |---|---|
-| Transaction appears as pending in Revolut | Imported into Actual as **uncleared** |
+| Transaction appears as pending | Imported into Actual as **uncleared** |
 | You categorise and rename it in Actual | Your changes are saved |
-| Transaction confirms in Revolut (usually 1-3 days) | Automatically flipped to **cleared**, payee updated if available |
+| Transaction confirms (usually 1-3 days) | Automatically flipped to **cleared** |
 
 You can safely edit the category, payee, and notes on a pending transaction. Matching uses **date and amount** -- avoid changing either of those.
 
@@ -135,6 +137,7 @@ docker compose restart
 | `ACTUAL_ACCOUNT` | No | `Revolut` | Account name in Actual Budget |
 | `EB_APPLICATION_ID` | Yes | | Enable Banking application ID |
 | `SYNC_INTERVAL_HOURS` | No | `6` | How often to sync |
+| `ACCOUNT_HOLDER_NAME` | No | | Your name as it appears on transfers, comma-separated. Used to correctly identify payees on incoming transfers and refunds. |
 | `NOTIFY_EMAIL` | No | | Email address for session expiry alerts |
 | `SMTP_HOST` | No | | SMTP server hostname |
 | `SMTP_PORT` | No | `587` | SMTP server port |
@@ -150,9 +153,12 @@ docker compose restart
 - Verify your session is valid: `cat data/state.json` -- check `eb_session_expiry`
 - If expired, re-run `dosetup.py`
 
+**Incoming transfers showing your own name as payee**
+- Set `ACCOUNT_HOLDER_NAME` in `docker-compose.yml` to your name as it appears on bank transfers
+
 **Duplicate transactions**
 - Should not happen with the current setup
-- If you see duplicates, check whether pending transactions are being imported twice -- open an issue
+- If you see duplicates, open an issue
 
 **Session expired**
 - Re-run `dosetup.py` and restart the container

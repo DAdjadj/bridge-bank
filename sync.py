@@ -18,6 +18,12 @@ NOTIFY_EMAIL    = os.environ.get("NOTIFY_EMAIL", "")
 SMTP_USER       = os.environ.get("SMTP_USER", "")
 SMTP_PASS       = os.environ.get("SMTP_PASS", "")
 
+# Optional: comma-separated list of your own name(s) as they appear in bank transfers.
+# Used to correctly identify the payee on incoming transfers and card refunds.
+# Example: "John Doe,JOHN DOE"
+ACCOUNT_HOLDER_NAME = os.environ.get("ACCOUNT_HOLDER_NAME", "")
+OWN_NAMES = {n.strip().lower() for n in ACCOUNT_HOLDER_NAME.split(",") if n.strip()}
+
 def send_email(subject, body):
     if not NOTIFY_EMAIL or not SMTP_USER or not SMTP_PASS:
         return
@@ -28,7 +34,9 @@ def send_email(subject, body):
     msg["From"]    = SMTP_USER
     msg["To"]      = NOTIFY_EMAIL
     try:
-        with smtplib.SMTP("smtp.mail.me.com", 587) as s:
+        smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port) as s:
             s.starttls()
             s.login(SMTP_USER, SMTP_PASS)
             s.sendmail(SMTP_USER, NOTIFY_EMAIL, msg.as_string())
@@ -70,19 +78,19 @@ def get_session(state):
     if days_left < 7:
         log.warning("Session expires in %d days. Re-run dosetup.py soon.", days_left)
         send_email(
-            f"Revolut sync: session expires in {days_left} days",
+            f"Bridge Bank: session expires in {days_left} days",
             f"""Your Enable Banking session expires in {days_left} days.
 
-To renew it, SSH into your server and run:
+To renew it, run dosetup.py on your server:
 
-  python3 /opt/docker/revolut-actual/dosetup.py
+  python3 dosetup.py
 
-Then follow the instructions -- open the URL in your browser, approve Revolut access,
+Then follow the instructions -- open the URL in your browser, approve access,
 paste the redirect URL back in the terminal.
 
 Finally restart the container:
 
-  docker restart revolut-actual
+  docker compose restart
 
 Done. Next renewal will be 180 days later.
 """
@@ -121,7 +129,6 @@ def parse_amount(t):
 
 def parse_payee(t):
     indic = (t.get("credit_debit_indicator") or t.get("credit_debit_indic", "")).upper()
-    own_names = {"david alves", "david adjadj alves"}
     if indic == "DBIT":
         # We are paying someone -- the payee is the creditor
         name = (t.get("creditor") or {}).get("name") or t.get("creditor_name")
@@ -129,7 +136,7 @@ def parse_payee(t):
         # We are receiving money -- the payee is the debtor (who sent it)
         name = (t.get("debtor") or {}).get("name") or t.get("debtor_name")
         # If debtor is ourselves (e.g. card refund), fall back to remittance info
-        if not name or name.lower() in own_names:
+        if not name or (OWN_NAMES and name.lower() in OWN_NAMES):
             ri = t.get("remittance_information")
             if ri and isinstance(ri, list):
                 name = ri[0]
@@ -178,7 +185,7 @@ def run_sync():
         save_state(state)
         return
 
-    pending_map  = state.get("pending_map", {})
+    pending_map   = state.get("pending_map", {})
     imported_refs = set(state.get("imported_refs", []))  # track confirmed txns by ref
 
     try:

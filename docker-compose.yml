@@ -1,7 +1,7 @@
 services:
-  revolut-actual:
+  bridge-bank:
     image: python:3.12-slim
-    container_name: revolut-actual
+    container_name: bridge-bank
     restart: unless-stopped
     volumes:
       - ./data:/data
@@ -22,6 +22,12 @@ services:
 
       # --- Sync settings ---
       SYNC_INTERVAL_HOURS: "6"
+
+      # --- Payee detection (optional but recommended) ---
+      # Your name as it appears on bank transfers, to correctly identify payees on
+      # incoming transfers and card refunds. Comma-separated if you have multiple variations.
+      # Example: "John Doe,JOHN DOE"
+      ACCOUNT_HOLDER_NAME: ""
 
       # --- Email notifications (optional) ---
       # Notifies you when the session is about to expire (every 180 days)
