@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os, json, time, logging, datetime, decimal, requests, schedule
 from actual import Actual
-from actual.queries import get_or_create_account, reconcile_transaction, get_transactions
+from actual.queries import get_or_create_account, reconcile_transaction, get_transactions, create_transaction
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -209,10 +209,17 @@ def run_sync():
 
                     if status == "PDNG":
                         if key not in pending_map:
-                            t = reconcile_transaction(
-                                actual.session, date, account, payee, notes,
-                                None, amount, cleared=False, already_matched=already_matched
-                            )
+                            try:
+                                t = reconcile_transaction(
+                                    actual.session, date, account, payee, notes,
+                                    None, amount, cleared=False, already_matched=already_matched
+                                )
+                            except Exception as e:
+                                log.warning("reconcile_transaction failed (%s), falling back to create_transaction", e)
+                                t = create_transaction(
+                                    actual.session, date, account, payee, notes,
+                                    amount, cleared=False
+                                )
                             already_matched.append(t)
                             if t.changed():
                                 pending_map[key] = str(t.id)
