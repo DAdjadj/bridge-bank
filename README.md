@@ -57,6 +57,8 @@ The script will:
 3. Paste the redirect URL back into the terminal
 4. Save your session to `data/state.json`
 
+> **Note:** when setting up your Enable Banking application, the redirect URL must be set to `https://enablebanking.com/`
+
 **For banks other than Revolut:**
 
 ```bash
@@ -165,6 +167,11 @@ docker compose restart
 
 **Container keeps restarting**
 - Usually means Actual Budget is unreachable -- verify `ACTUAL_URL` and that the container is running
+
+**Transaction skipped with "Multiple rows were found when one or none was required"**
+- This means Actual Budget has duplicate payee entries with the same name
+- Go to **Settings > Payees** in Actual Budget, search for the payee name shown in the log, and merge the duplicates
+- Restart the container after merging -- the skipped transaction will be retried automatically on the next sync
 
 **Transaction skipped with "Multiple rows were found when one or none was required"**
 - This means Actual Budget has duplicate payee entries with the same name

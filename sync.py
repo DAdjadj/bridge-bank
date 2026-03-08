@@ -104,7 +104,9 @@ def fetch_transactions(account_uid, date_from):
     url = f"{EB_API}/accounts/{account_uid}/transactions"
     while url:
         r = requests.get(url, headers=headers, params=params)
-        r.raise_for_status()
+        if not r.ok:
+            log.error("Enable Banking error %s: %s", r.status_code, r.text)
+            r.raise_for_status()
         data = r.json()
         txns.extend(data.get("transactions", []))
         ck = data.get("continuation_key")
@@ -132,6 +134,13 @@ def parse_payee(t):
     if indic == "DBIT":
         # We are paying someone -- the payee is the creditor
         name = (t.get("creditor") or {}).get("name") or t.get("creditor_name")
+        # Some banks (e.g. Swedbank) omit creditor for card payments -- fall back to remittance info
+        if not name:
+            ri = t.get("remittance_information")
+            if ri and isinstance(ri, list):
+                name = ri[0]
+            elif isinstance(ri, str):
+                name = ri
     else:
         # We are receiving money -- the payee is the debtor (who sent it)
         name = (t.get("debtor") or {}).get("name") or t.get("debtor_name")
