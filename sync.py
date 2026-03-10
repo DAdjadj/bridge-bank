@@ -2,6 +2,7 @@
 import os, json, time, logging, datetime, decimal, requests, schedule
 from actual import Actual
 from actual.queries import get_or_create_account, reconcile_transaction, get_transactions, create_transaction
+from actual.
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -203,6 +204,7 @@ def run_sync():
             existing = list(get_transactions(actual.session, account=account))
             already_matched = existing[:]
             added = updated = skipped = 0
+            new_txn = []
 
             for txn in raw:
                 try:
@@ -233,7 +235,8 @@ def run_sync():
                             already_matched.append(t)
                             if t.changed():
                                 pending_map[key] = str(t.id)
-                                added += 1
+                                 += 1
+                                new_txn.append(t)
                                 log.info("Imported pending: %s | %s | %s", date, amount, payee)
                             else:
                                 skipped += 1
@@ -268,6 +271,7 @@ def run_sync():
                                 if t.changed():
                                     if ref:
                                         imported_refs.add(ref)
+                                    new_txn.append(t)
                                     added += 1
                         else:
                             t = reconcile_transaction(
@@ -279,13 +283,14 @@ def run_sync():
                             if t.changed():
                                 if ref:
                                     imported_refs.add(ref)
+                                new_txn.append(t)
                                 added += 1
                             else:
                                 skipped += 1
 
                 except Exception as e:
                     log.warning("Skipping transaction: %s | %s", e, txn)
-
+            actual.run_rules(new_txn)
             actual.commit()
             log.info("Done: %d added, %d confirmed, %d skipped", added, updated, skipped)
 
