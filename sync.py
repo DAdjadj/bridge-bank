@@ -221,13 +221,14 @@ def run_sync():
                             try:
                                 t = reconcile_transaction(
                                     actual.session, date, account, payee, notes,
-                                    None, amount, cleared=False, already_matched=already_matched
+                                    None, amount, cleared=False, already_matched=already_matched,
+                                    imported_payee=payee
                                 )
                             except Exception as e:
                                 log.warning("reconcile_transaction failed (%s), falling back to create_transaction", e)
                                 t = create_transaction(
                                     actual.session, date, account, payee, notes,
-                                    amount, cleared=False
+                                    amount, cleared=False, imported_payee=payee
                                 )
                             already_matched.append(t)
                             if t.changed():
@@ -260,7 +261,8 @@ def run_sync():
                                 del pending_map[key]
                                 t = reconcile_transaction(
                                     actual.session, date, account, payee, notes,
-                                    None, amount, cleared=True, already_matched=already_matched
+                                    None, amount, cleared=True, already_matched=already_matched,
+                                    imported_payee=payee
                                 )
                                 already_matched.append(t)
                                 if t.changed():
@@ -270,7 +272,8 @@ def run_sync():
                         else:
                             t = reconcile_transaction(
                                 actual.session, date, account, payee, notes,
-                                None, amount, cleared=True, already_matched=already_matched
+                                None, amount, cleared=True, already_matched=already_matched,
+                                imported_payee=payee
                             )
                             already_matched.append(t)
                             if t.changed():
