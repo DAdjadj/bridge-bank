@@ -1,5 +1,7 @@
 # Bridge Bank
 
+> **Not comfortable with the terminal?** Use the [setup wizard at bridgebank.app](https://bridgebank.app) — fill in your details, download two files, and run one command. No manual configuration needed.
+
 Automatically sync your bank transactions to [Actual Budget](https://actualbudget.org/) using [Enable Banking](https://enablebanking.com/).
 
 - Imports confirmed transactions as **cleared**
