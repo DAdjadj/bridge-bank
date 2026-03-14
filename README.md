@@ -235,4 +235,7 @@ If you test with another bank, please open a PR to add it to this list.
 
 ## License
 
-MIT
+This project is licensed under MIT + Commons Clause. You are free to use, modify, and self-host this software for personal use. You may not offer it as a paid or hosted service without permission.
+
+See the [LICENSE](LICENSE) file for the full terms.
+
