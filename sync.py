@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os, json, time, logging, datetime, decimal, requests, schedule
 import licence
-import licence
 from actual import Actual
 from actual.queries import get_or_create_account, reconcile_transaction, get_transactions, create_transaction
 
