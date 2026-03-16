@@ -29,6 +29,9 @@
     <label for="holder_name">Your name on bank transfers <span style="font-size:10px;color:#4a5568;font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
     <input type="text" id="holder_name" name="holder_name" value="{{ holder_name }}" placeholder="e.g. John Doe,JOHN DOE">
     <div class="field-hint">As it appears on bank statements. Comma-separate multiple variations. Used to correctly identify payees on incoming transfers.</div>
+    <label for="sync_time">Daily sync time</label>
+    <input type="time" id="sync_time" name="sync_time" value="{{ sync_time }}" required>
+    <div class="field-hint">Bridge Bank will sync your transactions once a day at this time.</div>
     <button class="btn btn-primary" type="submit">Continue &rarr;</button>
   </form>
 </div>

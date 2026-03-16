@@ -116,6 +116,7 @@ def setup_notifications():
         smtp_user     = request.form.get("smtp_user", "").strip()
         smtp_password = request.form.get("smtp_password", "").strip()
         holder_name   = request.form.get("holder_name", "").strip()
+        sync_time     = request.form.get("sync_time", "06:00").strip()
         if not notify_email or not smtp_user or not smtp_password:
             error = "Notification email and sending credentials are required."
         else:
@@ -123,6 +124,7 @@ def setup_notifications():
             config.set("SMTP_USER", smtp_user)
             config.set("SMTP_PASSWORD", smtp_password)
             config.set("ACCOUNT_HOLDER_NAME", holder_name)
+            config.set("SYNC_TIME", sync_time)
             _start_scheduler_if_ready()
             return redirect(url_for("connect"))
     return render_template("setup_notifications.html",
@@ -131,6 +133,7 @@ def setup_notifications():
         smtp_user=config.SMTP_USER,
         smtp_password=config.SMTP_PASSWORD,
         holder_name=config.ACCOUNT_HOLDER_NAME,
+        sync_time=config.SYNC_TIME or "06:00",
         active="notifications",
     )
 
