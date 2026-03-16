@@ -57,19 +57,6 @@
     <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
   </div>
 
-{% elif not has_app_id %}
-  <div class="card">
-    <div class="card-title">Connect your bank</div>
-    <div class="card-sub">Step 4 of 4 — enter your Enable Banking details to get started.</div>
-    <form method="POST">
-      <input type="hidden" name="action" value="save_app_id">
-      <label for="eb_app_id" style="margin-top:0;">Enable Banking Application ID</label>
-      <input type="text" id="eb_app_id" name="eb_app_id" value="{{ eb_app_id }}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" autofocus required>
-      <div class="field-hint">From your <a href="https://enablebanking.com/" target="_blank">Enable Banking dashboard</a> — the UUID shown next to your application name.</div>
-      <button class="btn btn-primary" type="submit">Continue &rarr;</button>
-    </form>
-  </div>
-
 {% else %}
   <div class="card">
     <div class="card-title">Connect your bank</div>

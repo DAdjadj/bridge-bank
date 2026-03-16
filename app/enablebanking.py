@@ -8,6 +8,19 @@ logger  = logging.getLogger(__name__)
 EB_API  = "https://api.enablebanking.com"
 KEY_FILE = "/data/private.pem"
 
+def _get_app_id():
+    """Extract app ID from the key file using JWT decode — same UUID as the filename."""
+    import glob, os
+    # Try config first
+    if config.EB_APPLICATION_ID:
+        return config.EB_APPLICATION_ID
+    # Fall back to reading from the pem files in /data
+    for f in glob.glob("/data/*.pem"):
+        name = os.path.splitext(os.path.basename(f))[0]
+        if len(name) == 36:  # UUID length
+            return name
+    raise RuntimeError("Could not determine Enable Banking App ID. Make sure your .pem file is in /data/")
+
 def _make_headers():
     key_data = open(KEY_FILE, "rb").read()
     key = load_pem_private_key(key_data, password=None)
@@ -15,9 +28,9 @@ def _make_headers():
     payload = {
         "iss": "enablebanking.com", "aud": "api.enablebanking.com",
         "iat": now, "exp": now + 3600,
-        "jti": str(uuid.uuid4()), "sub": config.EB_APPLICATION_ID,
+        "jti": str(uuid.uuid4()), "sub": _get_app_id(),
     }
-    token = jwt.encode(payload, key, algorithm="RS256", headers={"kid": config.EB_APPLICATION_ID})
+    token = jwt.encode(payload, key, algorithm="RS256", headers={"kid": _get_app_id()})
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 def start_auth(bank_name: str, bank_country: str) -> dict:

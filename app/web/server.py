@@ -145,15 +145,7 @@ def connect():
     if request.method == "POST":
         action = request.form.get("action")
 
-        if action == "save_app_id":
-            app_id = request.form.get("eb_app_id", "").strip()
-            if not app_id:
-                error = "Application ID is required."
-            else:
-                config.set("EB_APPLICATION_ID", app_id)
-                return redirect(url_for("connect"))
-
-        elif action == "start":
+        if action == "start":
             bank_name    = request.form.get("bank_name", "").strip()
             bank_country = request.form.get("bank_country", "").strip()
             if not bank_name or not bank_country:
@@ -175,16 +167,12 @@ def connect():
     tokens     = _get_tokens()
     days_left  = _get_days_left()
     success    = request.args.get("success")
-    has_app_id = bool(config.EB_APPLICATION_ID)
-
     return render_template("connect.html",
         error=error,
         success=success,
         auth_url=auth_url,
         tokens=tokens,
         days_left=days_left,
-        has_app_id=has_app_id,
-        eb_app_id=config.EB_APPLICATION_ID,
         active="connect",
     )
 
