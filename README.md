@@ -45,20 +45,23 @@ Enable Banking is the regulated open banking provider that connects Bridge Bank 
 
 ### 3. Install Bridge Bank
 
-Create a folder on your server, upload your private key, and start the container:
+**On your server**, create the folder and download the compose file:
 ```bash
-# On your local machine — upload the key to your server
-scp ~/Downloads/your-app-id.pem user@your-server:~/bridge-bank/data/private.pem
-
-# On your server
-mkdir -p ~/bridge-bank && cd ~/bridge-bank
+mkdir -p ~/bridge-bank/data && cd ~/bridge-bank
 curl -O https://raw.githubusercontent.com/DAdjadj/bridge-bank/main/docker-compose.yml
+```
+
+**On your local machine**, upload the private key to your server. The filename matches your Enable Banking Application ID (e.g. `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.pem`):
+```bash
+scp ~/Downloads/your-app-id.pem user@your-server:~/bridge-bank/data/private.pem
+```
+
+**Back on your server**, start the container:
+```bash
 docker compose up -d
 ```
 
 Open **http://your-server-address:3002** in your browser. The setup wizard will guide you through the rest.
-
-> **Note:** Replace `your-app-id` with the actual filename of your downloaded `.pem` file, and `user@your-server` with your SSH login.
 
 ---
 
