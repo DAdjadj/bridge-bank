@@ -51,12 +51,12 @@ def send_success(tx_count: int):
 def send_failure(message: str):
     send(
         "Bridge Bank: sync failed",
-        f"Sync failed with the following error:\n\n{message}"
+        f"Sync failed with the following error:\n\n{message}\n\nOpen Bridge Bank at {config.BRIDGE_BANK_URL} to check your configuration."
     )
 
 
 def send_session_expiry_warning(days_left: int):
     send(
         f"Bridge Bank: bank session expires in {days_left} days",
-        f"Your Enable Banking session expires in {days_left} days.\n\nOpen Bridge Bank in your browser and go to the Connect page to re-authorise your bank."
+        f"Your Enable Banking session expires in {days_left} days.\n\nOpen Bridge Bank at {config.BRIDGE_BANK_URL} and go to the Bank page to re-authorise."
     )
