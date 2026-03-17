@@ -56,7 +56,7 @@ curl -O https://raw.githubusercontent.com/DAdjadj/bridge-bank/main/docker-compos
 
 **On your local machine**, upload the private key to your server. The filename matches your Enable Banking Application ID (e.g. `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.pem`):
 ```bash
-scp ~/Downloads/your-app-id.pem user@your-server:~/bridge-bank/data/private.pem
+scp ~/Downloads/your-app-id.pem user@your-server:~/bridge-bank/data/your-app-id.pem
 ```
 
 **Back on your server**, start the container:

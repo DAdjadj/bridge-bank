@@ -22,7 +22,13 @@ def _get_app_id():
     raise RuntimeError("Could not determine Enable Banking App ID. Make sure your .pem file is in /data/")
 
 def _make_headers():
-    key_data = open(KEY_FILE, "rb").read()
+    import glob, os
+    key_path = KEY_FILE
+    if not os.path.exists(key_path):
+        for f in glob.glob("/data/*.pem"):
+            key_path = f
+            break
+    key_data = open(key_path, "rb").read()
     key = load_pem_private_key(key_data, password=None)
     now = int(time.time())
     payload = {
