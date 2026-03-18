@@ -61,11 +61,21 @@
     <form method="POST" enctype="multipart/form-data">
       <input type="hidden" name="action" value="upload_pem">
       <label style="margin-top:0;">Private key file (.pem)</label>
-      <input type="file" name="pem_file" accept=".pem" required>
+      <input type="file" name="pem_file" id="pem-file-input" accept=".pem" required onchange="autoFillAppId(this)">
       <div class="field-hint">Your <code style="font-size:11px;color:#94a3b8;">private.pem</code> file from the Enable Banking dashboard. It stays on your server and is never shared.</div>
-      <label>Application ID</label>
-      <input type="text" name="eb_app_id" value="{{ eb_app_id }}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
-      <div class="field-hint">From your <a href="https://enablebanking.com/" target="_blank">Enable Banking dashboard</a> under Applications.</div>
+      <label>Application ID <span style="font-size:11px;font-weight:400;color:#4a5568;">(auto-filled from filename)</span></label>
+      <input type="text" name="eb_app_id" id="eb-app-id-input" value="{{ eb_app_id }}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+      <div class="field-hint">Filled automatically from your .pem filename. From your <a href="https://enablebanking.com/" target="_blank">Enable Banking dashboard</a> under Applications.</div>
+      <script>
+        function autoFillAppId(input) {
+          if (!input.files || !input.files[0]) return;
+          var filename = input.files[0].name;
+          var appId = filename.replace(/\.pem$/i, '');
+          if (appId.length === 36) {
+            document.getElementById('eb-app-id-input').value = appId;
+          }
+        }
+      </script>
       <button class="btn btn-primary" type="submit">Save &amp; continue &rarr;</button>
     </form>
   </div>
