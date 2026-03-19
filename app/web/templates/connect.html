@@ -153,7 +153,7 @@
     const q = query.toLowerCase();
     const matches = allBanks.filter(b =>
       b.name.toLowerCase().includes(q) || b.country.toLowerCase().includes(q)
-    ).slice(0, 40);
+    ).slice(0, 200);
     if (!matches.length) { dd.style.display = 'none'; return; }
     dd.innerHTML = matches.map(b => `
       <div onclick="selectBank('${b.name.replace(/'/g, "\'")}','${b.country}')" style="
