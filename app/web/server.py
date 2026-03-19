@@ -600,9 +600,14 @@ def update_check():
         tag = IMAGE_NAME.split(":")[1] if ":" in IMAGE_NAME else "latest"
         token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
         token = token_resp.json().get("token", "")
+        accept = ", ".join([
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        ])
         manifest_resp = _req.head(
             f"https://registry-1.docker.io/v2/{repo}/manifests/{tag}",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.docker.distribution.manifest.v2+json"},
+            headers={"Authorization": f"Bearer {token}", "Accept": accept},
             timeout=5
         )
         remote_digest = manifest_resp.headers.get("Docker-Content-Digest", "")
