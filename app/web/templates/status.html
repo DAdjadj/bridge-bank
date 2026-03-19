@@ -185,14 +185,20 @@ async function runSync() {
   btn.disabled = true;
   try {
     await fetch('/sync/now', { method: 'POST' });
-    // Poll until sync finishes (not running anymore)
+    var attempts = 0;
     var poll = setInterval(function() {
+      attempts++;
       fetch('/api/sync-status').then(function(r) { return r.json(); }).then(function(d) {
-        if (!d.running) {
+        if (!d.running && attempts > 1) {
           clearInterval(poll);
           location.reload();
         }
-      }).catch(function() {});
+      }).catch(function() {
+        if (attempts > 60) {
+          clearInterval(poll);
+          location.reload();
+        }
+      });
     }, 2000);
   } catch(e) {
     btn.textContent = 'Error — try again';

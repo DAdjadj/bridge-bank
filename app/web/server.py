@@ -176,6 +176,15 @@ def setup_notifications():
         active="notifications",
     )
 
+@app.route("/email/test", methods=["POST"])
+def test_email():
+    try:
+        from . import email_notify
+        email_notify.send("Bridge Bank: test email", "This is a test email from Bridge Bank. If you're reading this, your email notifications are working correctly.")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/setup/sync", methods=["GET", "POST"])
 def setup_sync():
     error = None

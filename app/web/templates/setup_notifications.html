@@ -31,7 +31,13 @@
     <label for="holder_name">Your name on bank transfers <span style="font-size:10px;color:#4a5568;font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
     <input type="text" id="holder_name" name="holder_name" value="{{ holder_name }}" placeholder="e.g. John Doe,JOHN DOE">
     <div class="field-hint">As it appears on bank statements. Comma-separate multiple variations. Used to correctly identify payees on incoming transfers.</div>
-    <button class="btn btn-primary" type="submit">Continue &rarr;</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-primary" type="submit">Continue &rarr;</button>
+      {% if smtp_user and smtp_password %}
+      <button type="button" class="btn btn-ghost" id="test-email-btn" onclick="sendTestEmail()" style="font-size:12px;">Send test email</button>
+      {% endif %}
+    </div>
+    <div id="test-email-msg" style="font-size:12px;margin-top:6px;min-height:18px;"></div>
   </form>
 </div>
 <script>
@@ -40,6 +46,28 @@ function togglePw() {
   const b = document.getElementById('pw-btn');
   if (f.type === 'password') { f.type = 'text'; b.textContent = 'Hide'; }
   else { f.type = 'password'; b.textContent = 'Show'; }
+}
+async function sendTestEmail() {
+  var btn = document.getElementById('test-email-btn');
+  var msg = document.getElementById('test-email-msg');
+  btn.textContent = 'Sending...';
+  btn.disabled = true;
+  try {
+    var res = await fetch('/email/test', { method: 'POST' });
+    var data = await res.json();
+    if (res.ok) {
+      msg.textContent = 'Test email sent — check your inbox.';
+      msg.style.color = '#10b981';
+    } else {
+      msg.textContent = data.error || 'Failed to send.';
+      msg.style.color = '#ef4444';
+    }
+  } catch(e) {
+    msg.textContent = 'Failed to send.';
+    msg.style.color = '#ef4444';
+  }
+  btn.textContent = 'Send test email';
+  btn.disabled = false;
 }
 </script>
 {% endblock %}
