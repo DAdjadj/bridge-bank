@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Sync — Bridge Bank{% endblock %}
+{% block steps %}
+<div class="steps">
+  <div class="step done"></div>
+  <div class="step done"></div>
+  <div class="step done"></div>
+  <div class="step active"></div>
+  <div class="step"></div>
+  <div class="step"></div>
+</div>
+{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-title">Sync</div>
+  <div class="card-sub">Step 4 of 6 — when and how often should Bridge Bank sync?</div>
+  {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="POST">
+    <label for="sync_time" style="margin-top:0;">Daily sync time</label>
+    <input type="time" id="sync_time" name="sync_time" value="{{ sync_time }}" required>
+    <label for="sync_frequency">Sync frequency</label>
+    <select id="sync_frequency" name="sync_frequency">
+      <option value="6" {% if sync_frequency == "6" %}selected{% endif %}>Every 6 hours</option>
+      <option value="12" {% if sync_frequency == "12" %}selected{% endif %}>Every 12 hours</option>
+      <option value="24" {% if sync_frequency == "24" %}selected{% endif %}>Every 24 hours</option>
+    </select>
+    {% if not has_synced %}
+    <label for="start_sync_date">Start syncing from</label>
+    <input type="date" id="start_sync_date" name="start_sync_date" value="{{ start_sync_date }}" required>
+    <div class="field-hint">Only transactions from this date forward will be imported.</div>
+    <div class="alert alert-warn" id="date-warn" style="display:none;">Choosing a past date may import transactions you already have in Actual Budget. This only happens on the first sync.</div>
+    {% endif %}
+    <button class="btn btn-primary" type="submit">{% if is_configured %}Save{% else %}Continue &rarr;{% endif %}</button>
+  </form>
+  {% if is_configured %}
+  <div style="margin-top:1.5rem; padding-top:1.25rem; border-top:1px solid var(--border);">
+    <div style="font-size:13px; font-weight:600; margin-bottom:0.35rem;">Reset sync</div>
+    <div style="font-size:11px; color:#4a5568; margin-bottom:0.75rem;">Re-import transactions from your start date. Useful after connecting a new bank or if transactions are missing. Existing transactions in Actual Budget won't be duplicated.</div>
+    <form method="POST" action="/sync/reset" onsubmit="return confirm('This will re-sync all transactions from your start date on the next sync. Continue?');">
+      <button type="submit" class="btn btn-ghost" style="font-size:13px;">Reset sync &rarr;</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% if not has_synced %}
+<script>
+const dateInput = document.getElementById('start_sync_date');
+const warn = document.getElementById('date-warn');
+const today = new Date().toISOString().split('T')[0];
+function checkDate() {
+  const val = dateInput.value;
+  warn.style.display = (val && val < today) ? 'block' : 'none';
+}
+dateInput.addEventListener('change', checkDate);
+checkDate();
+</script>
+{% endif %}
+{% endblock %}

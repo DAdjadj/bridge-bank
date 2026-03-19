@@ -44,7 +44,8 @@ input::placeholder { color: #4a5568; }
 .toggle-pw:hover { color: #94a3b8; }
 
 /* Buttons */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 14px; border-radius: 8px; padding: 10px 20px; cursor: pointer; transition: all 0.2s; border: none; text-decoration: none; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 14px; border-radius: 8px; padding: 10px 20px; cursor: pointer; transition: all 0.12s; border: none; text-decoration: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.btn:active { transform: scale(0.96) !important; opacity: 0.9; box-shadow: none !important; }
 .btn-primary { background: linear-gradient(135deg, #3b82f6, #6366f1); color: #fff; width: 100%; margin-top: 1.5rem; padding: 12px; font-size: 15px; }
 .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59,130,246,0.3); }
 .btn-ghost { background: transparent; color: #94a3b8; border: 1px solid #253450; }

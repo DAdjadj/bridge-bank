@@ -7,6 +7,7 @@
   <div class="step done"></div>
   <div class="step done"></div>
   <div class="step done"></div>
+  <div class="step done"></div>
 </div>
 {% endblock %}
 {% block content %}
@@ -27,14 +28,14 @@
   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.5rem;">
     <div>
       <div class="card-title" style="margin-bottom:0.25rem;">Status</div>
-      <div class="card-sub" style="margin-bottom:0;">Your sync is active</div>
+      <div class="card-sub" style="margin-bottom:0;">{{ fun_message }}</div>
     </div>
     <button class="btn btn-ghost" id="sync-btn" onclick="runSync()">Sync now</button>
   </div>
   {% for a in all_accounts %}
   <div style="{% if not loop.first %}margin-top:1rem; padding-top:1rem; border-top:1px solid #253450;{% endif %}">
     <div class="stat-row">
-      <span class="stat-label">Bank</span>
+      <span class="stat-label">Account</span>
       <span class="stat-value" style="display:flex;align-items:center;gap:8px;">
         {{ a.bank_name }} ({{ a.bank_country }}) &rarr; {{ a.actual_account }}
         <span class="connected-pill">Connected</span>
@@ -61,6 +62,12 @@
   </div>
   <div class="stat-row"><span class="stat-label">Next sync</span><span class="stat-value">{{ sync_time }} daily</span></div>
   <div class="stat-row"><span class="stat-label">Notifications</span><span class="stat-value">{{ notify_email or 'Disabled' }}</span></div>
+  {% if total_tx > 0 %}
+  <div class="stat-row"><span class="stat-label">Transactions synced</span><span class="stat-value">{{ total_tx }}</span></div>
+  {% endif %}
+  {% if streak > 1 %}
+  <div class="stat-row"><span class="stat-label">Sync streak</span><span class="stat-value">{{ streak }} in a row</span></div>
+  {% endif %}
 </div>
 
 <div class="card">
@@ -155,6 +162,17 @@ async function runUpdate() {
     }, 3000);
   }
 }
+
+// Check for updates on page load
+fetch('/update/check').then(function(r) { return r.json(); }).then(function(d) {
+  if (d.available) {
+    var btn = document.getElementById('update-btn');
+    btn.textContent = 'Update available';
+    btn.style.background = 'linear-gradient(135deg,#3b82f6,#6366f1)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'transparent';
+  }
+}).catch(function() {});
 
 async function runSync() {
   const btn = document.getElementById('sync-btn');

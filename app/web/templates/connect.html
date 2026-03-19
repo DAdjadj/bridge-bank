@@ -5,6 +5,7 @@
   <div class="step done"></div>
   <div class="step done"></div>
   <div class="step done"></div>
+  <div class="step done"></div>
   <div class="step {% if all_accounts %}done{% else %}active{% endif %}"></div>
   <div class="step"></div>
 </div>
@@ -21,7 +22,7 @@
 {% if not pem_ready and not auth_url %}
   <div class="card">
     <div class="card-title">Upload your private key</div>
-    <div class="card-sub">Step 4 of 5 — upload your Enable Banking private key file before connecting your bank.</div>
+    <div class="card-sub">Step 5 of 6 — upload your Enable Banking private key file before connecting your bank.</div>
     <form method="POST" enctype="multipart/form-data">
       <input type="hidden" name="action" value="upload_pem">
       <label style="margin-top:0;">Private key file (.pem)</label>
@@ -47,7 +48,7 @@
 {% elif pem_ready and not auth_url %}
   <div class="card">
     <div class="card-title">Connect your bank</div>
-    <div class="card-sub">Step 4 of 5 — search for your bank and authorise read-only access.</div>
+    <div class="card-sub">Step 5 of 6 — search for your bank and authorise read-only access.</div>
 
     <div style="margin-bottom:1rem;padding:10px 14px;background:rgba(16,185,129,0.07);border:1px solid rgba(16,185,129,0.2);border-radius:8px;font-size:13px;color:#6ee7b7;display:flex;align-items:center;gap:8px;">
       <span>&#10003;</span> Private key loaded. <a href="/connect/reset-pem" style="color:#94a3b8;font-size:12px;margin-left:auto;">Replace</a>
@@ -94,7 +95,7 @@
       <input type="hidden" id="inp-bank-name" name="bank_name">
       <input type="hidden" id="inp-bank-country" name="bank_country">
       <label style="margin-top:0;">Actual Budget account</label>
-      <input type="text" name="actual_account" id="actual-account-input" placeholder="e.g. Revolut" required>
+      <input type="text" name="actual_account" id="actual-account-input" placeholder="e.g. Revolut" required oninput="checkReady()">
       <div class="field-hint">The name of the account in Actual Budget where transactions will be synced.</div>
       <label>Search your bank</label>
       <div style="position:relative;">
@@ -106,7 +107,7 @@
         <button type="button" onclick="clearBank()" style="background:none;border:none;color:#4a5568;cursor:pointer;font-size:11px;padding:0;">clear</button>
       </div>
       <div class="field-hint">Personal accounts only. 2,500+ banks across 29 European countries.</div>
-      <button class="btn btn-primary" type="submit" id="connect-btn" disabled>Authorise bank &rarr;</button>
+      <button class="btn btn-primary" type="submit" id="connect-btn" disabled style="background:var(--surface2); opacity:0.5;">Authorise bank &rarr;</button>
     </form>
     {% endif %}
   </div>
@@ -172,15 +173,29 @@
     if (q.trim()) filterBanks(q);
   }
 
+  function checkReady() {
+    var bankSelected = document.getElementById('inp-bank-name').value.length > 0;
+    var accountField = document.getElementById('actual-account-input');
+    var accountFilled = accountField ? accountField.value.trim().length > 0 : true;
+    var btn = document.getElementById('connect-btn');
+    var ready = bankSelected && accountFilled;
+    btn.disabled = !ready;
+    btn.style.background = ready ? '#10b981' : 'var(--surface2)';
+    btn.style.opacity = ready ? '1' : '0.5';
+  }
+
   function selectBank(name, country) {
     document.getElementById('inp-bank-name').value = name;
     document.getElementById('inp-bank-country').value = country;
     document.getElementById('bank-search').value = '';
     document.getElementById('bank-dropdown').style.display = 'none';
-    const sel = document.getElementById('selected-bank');
+    var sel = document.getElementById('selected-bank');
     document.getElementById('selected-label').textContent = name + ' (' + country + ')';
     sel.style.display = 'flex';
-    document.getElementById('connect-btn').disabled = false;
+    // Auto-fill account name with bank name
+    var accountField = document.getElementById('actual-account-input');
+    if (accountField && !accountField.value.trim()) accountField.value = name;
+    checkReady();
   }
 
   function clearBank() {
@@ -188,7 +203,7 @@
     document.getElementById('inp-bank-country').value = '';
     document.getElementById('bank-search').value = '';
     document.getElementById('selected-bank').style.display = 'none';
-    document.getElementById('connect-btn').disabled = true;
+    checkReady();
   }
 
   document.addEventListener('click', function(e) {

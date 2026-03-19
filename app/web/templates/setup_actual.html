@@ -7,12 +7,13 @@
   <div class="step"></div>
   <div class="step"></div>
   <div class="step"></div>
+  <div class="step"></div>
 </div>
 {% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-title">Actual Budget</div>
-  <div class="card-sub">Step 2 of 5 — your self-hosted Actual Budget instance</div>
+  <div class="card-sub">Step 2 of 6 — your self-hosted Actual Budget instance</div>
   {% if error %}
     <div class="alert alert-error">{{ error }}</div>
   {% endif %}
@@ -28,32 +29,8 @@
     <label for="actual_account">Account name</label>
     <input type="text" id="actual_account" name="actual_account" value="{{ actual_account }}" placeholder="Revolut" required>
     <div class="field-hint">Must match exactly the account name in Actual Budget.</div>
-    <label for="start_sync_date">Start syncing from</label>
-    <input type="date" id="start_sync_date" name="start_sync_date" value="{{ start_sync_date }}" required>
-    <div class="field-hint" id="date-hint">Only transactions from this date forward will be imported.</div>
-    <div class="alert alert-warn" id="date-warn" style="display:none;">Choosing a past date may import transactions you already have in Actual Budget. This only happens on the first sync.</div>
     <button class="btn btn-primary" type="submit">Continue &rarr;</button>
   </form>
-  {% if is_configured %}
-  <div style="margin-top:1.5rem; padding-top:1.25rem; border-top:1px solid var(--border);">
-    <div style="font-size:13px; font-weight:600; margin-bottom:0.35rem;">Reset sync</div>
-    <div style="font-size:11px; color:#4a5568; margin-bottom:0.75rem;">Re-import transactions from your start date. Useful after connecting a new bank or if transactions are missing. Existing transactions in Actual Budget won't be duplicated.</div>
-    <form method="POST" action="/sync/reset" onsubmit="return confirm('This will re-sync all transactions from your start date on the next sync. Continue?');">
-      <button type="submit" class="btn btn-ghost" style="font-size:13px;">Reset sync →</button>
-    </form>
-  </div>
-  {% endif %}
-  <script>
-  const dateInput = document.getElementById('start_sync_date');
-  const warn = document.getElementById('date-warn');
-  const today = new Date().toISOString().split('T')[0];
-  function checkDate() {
-    const val = dateInput.value;
-    warn.style.display = (val && val < today) ? 'block' : 'none';
-  }
-  dateInput.addEventListener('change', checkDate);
-  checkDate();
-  </script>
 </div>
 
 {% endblock %}

@@ -100,7 +100,6 @@ def setup_actual():
         password = request.form.get("actual_password", "").strip()
         sync_id  = request.form.get("actual_sync_id", "").strip()
         account  = request.form.get("actual_account", "").strip()
-        start_date = request.form.get("start_sync_date", "").strip()
         if not url or not password or not sync_id or not account:
             error = "All fields are required."
         else:
@@ -108,8 +107,6 @@ def setup_actual():
             config.set("ACTUAL_PASSWORD", password)
             config.set("ACTUAL_SYNC_ID", sync_id)
             config.set("ACTUAL_ACCOUNT", account)
-            if start_date:
-                config.set("START_SYNC_DATE", start_date)
             return redirect(url_for("setup_notifications"))
     return render_template("setup_actual.html",
         error=error,
@@ -117,8 +114,6 @@ def setup_actual():
         actual_password=config.ACTUAL_PASSWORD,
         actual_sync_id=config.ACTUAL_SYNC_ID,
         actual_account=config.ACTUAL_ACCOUNT,
-        start_sync_date=config.START_SYNC_DATE or __import__('datetime').date.today().isoformat(),
-        is_configured=config.is_configured(),
         active="actual",
     )
 
@@ -134,7 +129,6 @@ def setup_notifications():
         smtp_user     = request.form.get("smtp_user", "").strip()
         smtp_password = request.form.get("smtp_password", "").strip()
         holder_name   = request.form.get("holder_name", "").strip()
-        sync_time     = request.form.get("sync_time", "06:00").strip()
         if not notify_email or not smtp_user or not smtp_password:
             error = "Notification email and sending credentials are required."
         else:
@@ -142,20 +136,41 @@ def setup_notifications():
             config.set("SMTP_USER", smtp_user)
             config.set("SMTP_PASSWORD", smtp_password)
             config.set("ACCOUNT_HOLDER_NAME", holder_name)
-            config.set("SYNC_TIME", sync_time)
             scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
             host   = request.headers.get("X-Forwarded-Host", request.host)
             config.set("BRIDGE_BANK_URL", f"{scheme}://{host}")
-            _start_scheduler_if_ready()
-            return redirect(url_for("connect"))
+            return redirect(url_for("setup_sync"))
     return render_template("setup_notifications.html",
         error=error,
         notify_email=config.NOTIFY_EMAIL,
         smtp_user=config.SMTP_USER,
         smtp_password=config.SMTP_PASSWORD,
         holder_name=config.ACCOUNT_HOLDER_NAME,
-        sync_time=config.SYNC_TIME or "06:00",
         active="notifications",
+    )
+
+@app.route("/setup/sync", methods=["GET", "POST"])
+def setup_sync():
+    error = None
+    if request.method == "POST":
+        sync_time = request.form.get("sync_time", "06:00").strip()
+        sync_frequency = request.form.get("sync_frequency", "24").strip()
+        start_date = request.form.get("start_sync_date", "").strip()
+        config.set("SYNC_TIME", sync_time)
+        config.set("SYNC_FREQUENCY", sync_frequency)
+        if start_date:
+            config.set("START_SYNC_DATE", start_date)
+        _start_scheduler_if_ready()
+        return redirect(url_for("connect"))
+    has_synced = bool(db.get_last_sync())
+    return render_template("setup_sync.html",
+        error=error,
+        sync_time=config.SYNC_TIME or "06:00",
+        sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or "24",
+        start_sync_date=config.START_SYNC_DATE or __import__('datetime').date.today().isoformat(),
+        is_configured=config.is_configured(),
+        has_synced=has_synced,
+        active="sync",
     )
 
 # ---------------------------------------------------------------------------
@@ -382,6 +397,31 @@ def status():
     if not val.get("valid") and not val.get("offline"):
         license_sync_failed = True
 
+    # Fun stats
+    import random
+    streak_rows = db.get_recent_syncs(limit=100)
+    streak = 0
+    for r in streak_rows:
+        if r["status"] == "success":
+            streak += 1
+        else:
+            break
+    total_tx = sum(r.get("tx_count", 0) for r in db.get_recent_syncs(limit=9999))
+
+    fun_messages = [
+        "Your finances are in good hands.",
+        "Another day, another sync.",
+        "Everything's running smoothly.",
+        "Your bank called. They said everything's fine.",
+        "Transactions delivered. You're welcome.",
+        "Syncing like clockwork.",
+        "Actual Budget is looking sharp.",
+        "All quiet on the banking front.",
+        "Nothing to worry about here.",
+        "Your data, your machine, your peace of mind.",
+    ]
+    fun_message = random.choice(fun_messages)
+
     return render_template("status.html",
         syncs=syncs,
         all_accounts=all_accounts,
@@ -397,6 +437,9 @@ def status():
         total_pages=log_data["total_pages"],
         active="status",
         update_mode=db.get_setting("update_mode"),
+        total_tx=total_tx,
+        streak=streak,
+        fun_message=fun_message,
     )
 
 # ---------------------------------------------------------------------------
@@ -437,7 +480,8 @@ def sync_reset():
             state["accounts"][key].pop("last_sync_date", None)
         with open(state_file, "w") as f:
             json.dump(state, f, indent=2)
-    return redirect(url_for("status"))
+    db.clear_sync_log()
+    return redirect(url_for("setup_sync"))
 
 # ---------------------------------------------------------------------------
 # Disconnect
@@ -469,6 +513,32 @@ def update_preference():
     mode = request.form.get("mode", "manual")
     db.set_setting("update_mode", mode)
     return redirect(url_for("status"))
+
+@app.route("/update/check", methods=["GET"])
+def update_check():
+    import subprocess, os
+    if not os.path.exists("/var/run/docker.sock"):
+        return jsonify({"available": False})
+    try:
+        import requests as _req
+        repo = IMAGE_NAME.split(":")[0]
+        tag = IMAGE_NAME.split(":")[1] if ":" in IMAGE_NAME else "latest"
+        token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
+        token = token_resp.json().get("token", "")
+        manifest_resp = _req.head(
+            f"https://registry-1.docker.io/v2/{repo}/manifests/{tag}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.docker.distribution.manifest.v2+json"},
+            timeout=5
+        )
+        remote_digest = manifest_resp.headers.get("Docker-Content-Digest", "")
+        local_digest = subprocess.run(
+            ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", IMAGE_NAME],
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+        local_sha = local_digest.split("@")[-1] if "@" in local_digest else ""
+        return jsonify({"available": remote_digest != local_sha and remote_digest != ""})
+    except Exception:
+        return jsonify({"available": False})
 
 @app.route("/update/run", methods=["POST"])
 def update_run():
