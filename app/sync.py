@@ -193,6 +193,8 @@ def _sync_account(account, state):
                     amount = _parse_amount(txn)
                     payee  = _parse_payee(txn)
                     notes  = _parse_notes(txn)
+                    if notes and notes.strip().lower() == payee.strip().lower():
+                        notes = ""
                     ref    = _get_entry_ref(txn)
                     key    = f"{date}|{amount}"
 
