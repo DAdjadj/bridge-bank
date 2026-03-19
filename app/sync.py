@@ -283,6 +283,7 @@ def run():
     state = _load_state()
     total_added = 0
     errors = []
+    successes = []
 
     for account in all_accounts:
         bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')})"
@@ -290,6 +291,7 @@ def run():
             success, added, msg = _sync_account(account, state)
             if success:
                 total_added += added
+                successes.append(f"{bank_label}: {added} transactions")
                 db.log_sync("success", tx_count=added, message=bank_label)
             else:
                 errors.append(msg)
@@ -301,11 +303,10 @@ def run():
 
     _save_state(state)
 
-    success_count = len(all_accounts) - len(errors)
-    if errors and success_count == 0:
+    if errors and not successes:
         email_notify.send_failure("; ".join(errors))
     elif errors:
-        summary = f"{success_count} account(s) synced ({total_added} transactions). Failed: {'; '.join(errors)}"
+        summary = f"Synced: {'; '.join(successes)}. Failed: {'; '.join(errors)}"
         email_notify.send_failure(summary)
     else:
         email_notify.send_success(total_added)
