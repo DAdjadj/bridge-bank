@@ -60,7 +60,7 @@
     <span class="stat-label">Last sync</span>
     <span class="stat-value">{{ last_sync or 'Never' }}</span>
   </div>
-  <div class="stat-row"><span class="stat-label">Next sync</span><span class="stat-value">{{ sync_time }} daily</span></div>
+  <div class="stat-row"><span class="stat-label">Sync</span><span class="stat-value">Every {{ sync_frequency }}h from {{ sync_time }}</span></div>
   <div class="stat-row"><span class="stat-label">Notifications</span><span class="stat-value">{{ notify_email or 'Disabled' }}</span></div>
   {% if total_tx >= 0 %}
   <div class="stat-row"><span class="stat-label">Transactions synced</span><span class="stat-value">{{ total_tx }}</span></div>

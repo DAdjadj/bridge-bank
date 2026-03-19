@@ -454,6 +454,7 @@ def status():
         days_left=days_left,
         last_sync=last_sync,
         sync_time=config.SYNC_TIME,
+        sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or '24',
         notify_email=config.NOTIFY_EMAIL,
         activation_usage=act_info["usage"],
         activation_limit=act_info["limit"],
