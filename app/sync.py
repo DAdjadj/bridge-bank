@@ -312,10 +312,9 @@ def run():
     _save_state(state)
 
     if errors and not successes:
-        email_notify.send_failure("; ".join(errors))
+        email_notify.send_failure("\n".join(f"  ✗ {e}" for e in errors))
     elif errors:
-        summary = f"Synced: {'; '.join(successes)}. Failed: {'; '.join(errors)}"
-        email_notify.send_failure(summary)
+        email_notify.send_partial(successes, errors)
     else:
         email_notify.send_success(total_added)
 

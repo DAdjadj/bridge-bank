@@ -60,6 +60,16 @@ def send_failure(message: str):
     )
 
 
+def send_partial(successes: list, errors: list):
+    lines = []
+    for s in successes:
+        lines.append(f"  ✓ {s}")
+    for e in errors:
+        lines.append(f"  ✗ {e}")
+    body = "Sync finished with some errors:\n\n" + "\n".join(lines) + f"\n\nOpen Bridge Bank at {config.BRIDGE_BANK_URL} to check your configuration."
+    send("Bridge Bank: sync partially complete", body)
+
+
 def send_session_expiry_warning(days_left: int):
     send(
         f"Bridge Bank: bank session expires in {days_left} days",
