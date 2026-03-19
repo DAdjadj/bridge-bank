@@ -12,6 +12,10 @@
 {% endblock %}
 {% block content %}
 
+{% if is_trial and trial_expires_at %}
+  <div class="alert alert-warn">You are on a free trial — expires {{ trial_expires_at }}. <a href="https://bridgebank.app" target="_blank" style="color:inherit;font-weight:600;">Purchase a licence &rarr;</a></div>
+{% endif %}
+
 {% if license_sync_failed %}
   {% if license_limit_reached %}
     <div class="alert alert-error">Your license is inactive and syncing has stopped. <a href="/setup" target="_blank" style="color:inherit;font-weight:600;">Manage your license &rarr;</a></div>

@@ -94,16 +94,19 @@ def validate(key=None):
 def get_activation_info():
     from . import config
     key = config.LICENCE_KEY
-    fp = _get_fingerprint()
     if not key:
-        return {"usage": 0, "limit": 2}
+        return {"usage": 0, "limit": 2, "is_trial": False, "expires_at": None}
     try:
-        import requests as _r
-        resp = _r.post("https://api.bridgebank.app/info",
+        resp = requests.post("https://api.bridgebank.app/info",
             json={"license_key": key}, timeout=5)
         if resp.status_code == 200:
             d = resp.json()
-            return {"usage": d.get("activation_usage", 0), "limit": d.get("activation_limit", 2)}
+            return {
+                "usage": d.get("activation_usage", 0),
+                "limit": d.get("activation_limit", 2),
+                "is_trial": d.get("is_trial", False),
+                "expires_at": d.get("expires_at"),
+            }
     except Exception:
         pass
-    return {"usage": 0, "limit": 2}
+    return {"usage": 0, "limit": 2, "is_trial": False, "expires_at": None}

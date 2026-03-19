@@ -15,12 +15,16 @@
   <div class="card-title">Welcome to Bridge Bank</div>
   <div class="card-sub">Step 1 of 6 — enter your license key to get started</div>
   {% if error %}
-    <div class="alert alert-error">{{ error }}</div>
+    {% if 'expired' in error|lower %}
+      <div class="alert alert-error">Your free trial has expired. <a href="https://bridgebank.app" target="_blank" style="color:inherit;font-weight:600;">Purchase a licence to continue &rarr;</a></div>
+    {% else %}
+      <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
   {% endif %}
   <form method="POST">
     <label for="license_key" style="margin-top:0;">License key</label>
     <input type="text" id="license_key" name="license_key" value="{{ license_key }}" placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" autocomplete="off" autofocus required>
-    <div class="field-hint">Don't have one? <a href="https://bridgebank.app" target="_blank">Purchase at bridgebank.app &rarr;</a></div>
+    <div class="field-hint">Don't have one? <a href="https://bridgebank.app" target="_blank">Purchase at bridgebank.app</a> or <a href="https://bridgebank.app" target="_blank">start a free trial &rarr;</a></div>
     <button class="btn btn-primary" type="submit">Continue &rarr;</button>
   </form>
 </div>

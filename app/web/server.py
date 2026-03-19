@@ -489,6 +489,8 @@ def status():
         notify_email=config.NOTIFY_EMAIL,
         activation_usage=act_info["usage"],
         activation_limit=act_info["limit"],
+        is_trial=act_info.get("is_trial", False),
+        trial_expires_at=act_info.get("expires_at", "")[:10] if act_info.get("expires_at") else None,
         license_sync_failed=license_sync_failed,
         license_limit_reached=(license_sync_failed and act_info["usage"] >= act_info["limit"] and act_info["limit"] > 0),
         page=log_data["page"],
