@@ -331,19 +331,33 @@ def run():
 
 def _check_for_update():
     """Check Docker Hub for a newer image and store result in DB."""
-    import subprocess, os, requests as _req
+    import subprocess, os, platform, requests as _req
     if not os.path.exists("/var/run/docker.sock"):
         return
     repo = "daalves/bridge-bank"
     tag = "latest"
     token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
     token = token_resp.json().get("token", "")
-    manifest_resp = _req.head(
+    manifest_resp = _req.get(
         f"https://registry-1.docker.io/v2/{repo}/manifests/{tag}",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.docker.distribution.manifest.v2+json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
+        },
         timeout=5
     )
-    remote_digest = manifest_resp.headers.get("Docker-Content-Digest", "")
+    remote_digest = ""
+    manifest_data = manifest_resp.json()
+    arch = platform.machine()
+    arch_map = {"x86_64": "amd64", "aarch64": "arm64", "armv7l": "arm"}
+    target_arch = arch_map.get(arch, arch)
+    for m in manifest_data.get("manifests", []):
+        p = m.get("platform", {})
+        if p.get("architecture") == target_arch and p.get("os") == "linux":
+            remote_digest = m.get("digest", "")
+            break
+    if not remote_digest:
+        remote_digest = manifest_resp.headers.get("Docker-Content-Digest", "")
     local_digest = subprocess.run(
         ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", f"{repo}:{tag}"],
         capture_output=True, text=True, timeout=10
