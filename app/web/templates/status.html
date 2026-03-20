@@ -67,15 +67,28 @@
       </div>
       <button class="btn btn-ghost" type="submit" style="font-size:12px;">Save</button>
     </div>
-    {% if sync_frequency != "0" %}
-    <div style="font-size:12px;color:#94a3b8;margin-top:8px;">Syncs at {{ sync_times }}</div>
-    {% endif %}
+    <div style="font-size:12px;color:#94a3b8;margin-top:8px;" id="sync-times-preview">{% if sync_frequency != "0" %}Syncs at {{ sync_times }}{% endif %}</div>
   </form>
   <script>
-  function toggleStartTime() {
-    var freq = document.getElementById('sync_frequency').value;
-    document.getElementById('start-time-wrap').hidden = (freq === '0');
+  function updateSyncPreview() {
+    var freq = parseInt(document.getElementById('sync_frequency').value);
+    var wrap = document.getElementById('start-time-wrap');
+    var preview = document.getElementById('sync-times-preview');
+    wrap.hidden = (freq === 0);
+    if (freq === 0) { preview.textContent = ''; return; }
+    var time = document.getElementById('sync_time').value;
+    if (!time) { preview.textContent = ''; return; }
+    var parts = time.split(':');
+    var h = parseInt(parts[0]), m = parseInt(parts[1]);
+    var times = [];
+    for (var i = 0; i < 24; i += freq) {
+      var th = (h + i) % 24;
+      times.push((th < 10 ? '0' : '') + th + ':' + (m < 10 ? '0' : '') + m);
+    }
+    preview.textContent = 'Syncs at ' + times.join(', ');
   }
+  document.getElementById('sync_frequency').addEventListener('change', updateSyncPreview);
+  document.getElementById('sync_time').addEventListener('input', updateSyncPreview);
   </script>
 </div>
 
