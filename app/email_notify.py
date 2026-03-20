@@ -35,7 +35,7 @@ def send(subject: str, body: str, raise_on_error: bool = False):
         return
     mime = MIMEText(body)
     mime["Subject"] = subject
-    mime["From"]    = config.SMTP_USER
+    mime["From"]    = config.SMTP_FROM or config.SMTP_USER
     mime["To"]      = config.NOTIFY_EMAIL
     try:
         host = _smtp_host_for(config.SMTP_USER)
@@ -43,7 +43,7 @@ def send(subject: str, body: str, raise_on_error: bool = False):
         with smtplib.SMTP(host, port) as s:
             s.starttls()
             s.login(config.SMTP_USER, config.SMTP_PASSWORD)
-            s.sendmail(config.SMTP_USER, config.NOTIFY_EMAIL, mime.as_string())
+            s.sendmail(config.SMTP_FROM or config.SMTP_USER, config.NOTIFY_EMAIL, mime.as_string())
         logger.info("Email sent: %s", subject)
     except Exception as e:
         logger.warning("Failed to send email: %s", e)
@@ -68,6 +68,8 @@ def _friendly_smtp_error(e):
 
 
 def send_success(tx_count: int):
+    if config.NOTIFY_ON == "errors":
+        return
     send(
         "Bridge Bank: sync complete",
         f"Sync completed successfully. {tx_count} transaction(s) imported."

@@ -1,4 +1,5 @@
 import logging
+import re
 import threading
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from .. import config, db, licence, sync
@@ -17,7 +18,21 @@ def _get_secret_key():
 
 app.secret_key = _get_secret_key()
 
-CONTAINER_NAME = "bridge-bank"
+def _detect_container_name():
+    """Detect container name from mounted compose file or fall back to default."""
+    import os
+    compose_path = "/compose/docker-compose.yml"
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path) as f:
+                for line in f:
+                    if "container_name:" in line:
+                        return line.split("container_name:")[-1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+    return "bridge-bank"
+
+CONTAINER_NAME = _detect_container_name()
 IMAGE_NAME = "daalves/bridge-bank:latest"
 
 COUNTRIES = [
@@ -155,6 +170,9 @@ def setup_notifications():
         notify_email  = request.form.get("notify_email", "").strip()
         smtp_user     = request.form.get("smtp_user", "").strip()
         smtp_password = request.form.get("smtp_password", "").strip()
+        smtp_from     = request.form.get("smtp_from", "").strip()
+        smtp_host     = request.form.get("smtp_host", "").strip()
+        notify_on     = request.form.get("notify_on", "all").strip()
         holder_name   = request.form.get("holder_name", "").strip()
         if not notify_email or not smtp_user or not smtp_password:
             error = "Notification email and sending credentials are required."
@@ -162,6 +180,9 @@ def setup_notifications():
             config.set("NOTIFY_EMAIL", notify_email)
             config.set("SMTP_USER", smtp_user)
             config.set("SMTP_PASSWORD", smtp_password)
+            config.set("SMTP_FROM", smtp_from)
+            config.set("SMTP_HOST", smtp_host)
+            config.set("NOTIFY_ON", notify_on)
             config.set("ACCOUNT_HOLDER_NAME", holder_name)
             scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
             host   = request.headers.get("X-Forwarded-Host", request.host)
@@ -172,6 +193,9 @@ def setup_notifications():
         notify_email=config.NOTIFY_EMAIL,
         smtp_user=config.SMTP_USER,
         smtp_password=config.SMTP_PASSWORD,
+        smtp_from=config.SMTP_FROM,
+        smtp_host=config.SMTP_HOST,
+        notify_on=config.NOTIFY_ON,
         holder_name=config.ACCOUNT_HOLDER_NAME,
         active="notifications",
     )
@@ -444,7 +468,7 @@ def callback():
     error = request.args.get("error")
     if error or not code:
         logger.warning("Callback received error=%s code=%s", error, bool(code))
-        return redirect(url_for("connect") + "?error=auth_failed")
+        return redirect(url_for("connect") + "?error=Bank connection was cancelled or denied. Please try again.")
     try:
         from .. import enablebanking
         result = enablebanking.complete_auth(code=code, state=state)
@@ -465,10 +489,10 @@ def callback():
                 return redirect(url_for("pick_account"))
         else:
             logger.warning("Callback: complete_auth returned no accounts")
-            return redirect(url_for("connect") + "?error=auth_failed")
+            return redirect(url_for("connect") + "?error=Your bank did not return any accounts. This may happen if you declined account access during authorisation, or if the selected account type is not supported by your bank through open banking. Please try again and make sure to approve access to at least one account.")
     except Exception as e:
         logger.error("Callback failed: %s", e)
-        return redirect(url_for("connect") + "?error=" + str(e))
+        return redirect(url_for("connect") + "?error=Bank connection failed: " + str(e) + ". If this keeps happening, please download your logs from the Status page and send them to support@bridgebank.app.")
 
 @app.route("/pick-account")
 def pick_account():
@@ -645,6 +669,7 @@ def disconnect():
 @app.route("/reset-sync", methods=["POST"])
 def reset_sync():
     account_id = request.form.get("account_id")
+    reset_date = request.form.get("reset_date", "").strip()
     if account_id:
         from .. import sync as sync_mod
         state = sync_mod._load_state()
@@ -652,12 +677,23 @@ def reset_sync():
         if account_id in acct_state:
             del acct_state[account_id]
             sync_mod._save_state(state)
-            logger.info("Reset sync state for account %s", account_id)
+        if reset_date:
+            db.update_bank_account_field(int(account_id), "start_sync_date", reset_date)
+        logger.info("Reset sync state for account %s (start_date=%s)", account_id, reset_date)
     return redirect(url_for("connect"))
 
 # ---------------------------------------------------------------------------
 # Logs
 # ---------------------------------------------------------------------------
+
+def _sanitize_logs(text):
+    # Mask IBANs (2 letter country + 2 digits + up to 30 chars)
+    text = re.sub(r'\b([A-Z]{2}\d{2})\w{4,}(\w{4})\b', r'\1****\2', text)
+    # Mask email addresses
+    text = re.sub(r'\b(\w{2})\w*(@\w+\.\w+)', r'\1***\2', text)
+    # Remove large JSON account blobs from Enable Banking
+    text = re.sub(r"\[?\{'account_id':.*?\}\]?", '[account data redacted]', text)
+    return text
 
 @app.route("/api/logs")
 def api_logs():
@@ -666,14 +702,15 @@ def api_logs():
     lines = request.args.get("lines", "200")
     try:
         result = subprocess.run(
-            ["docker", "logs", "--tail", lines, "bridge-bank"],
+            ["docker", "logs", "--tail", lines, CONTAINER_NAME],
             capture_output=True, text=True, timeout=10
         )
         # docker logs sends output to stderr
         output = result.stdout + result.stderr
+        output = _sanitize_logs(output)
         # Get container image ID as version identifier
         version = subprocess.run(
-            ["docker", "inspect", "--format", "{{.Image}}", "bridge-bank"],
+            ["docker", "inspect", "--format", "{{.Image}}", CONTAINER_NAME],
             capture_output=True, text=True, timeout=5
         ).stdout.strip()[:19].replace("sha256:", "")
         return jsonify({"logs": output, "version": version})
@@ -719,7 +756,7 @@ def update_check():
         # Compare against the running container's image, not the locally pulled image.
         # This detects updates even when the image was pulled but the container wasn't recreated.
         container_image = subprocess.run(
-            ["docker", "inspect", "--format", "{{.Image}}", "bridge-bank"],
+            ["docker", "inspect", "--format", "{{.Image}}", CONTAINER_NAME],
             capture_output=True, text=True, timeout=10
         ).stdout.strip()
         local_digest = subprocess.run(
@@ -753,7 +790,7 @@ def update_run():
         logger.info("Docker pull output: %s", pull.stdout.strip() or pull.stderr.strip())
         # Check if container is running the pulled image
         container_image = subprocess.run(
-            ["docker", "inspect", "--format", "{{.Image}}", "bridge-bank"],
+            ["docker", "inspect", "--format", "{{.Image}}", CONTAINER_NAME],
             capture_output=True, text=True, timeout=10
         ).stdout.strip()
         pulled_image_id = subprocess.run(
@@ -824,6 +861,8 @@ def banks():
 def _get_sync_times():
     sync_time = config.SYNC_TIME or "06:00"
     frequency = int(getattr(config, 'SYNC_FREQUENCY', '24') or '24')
+    if frequency == 0:
+        return "Manual only"
     h, m = int(sync_time.split(":")[0]), int(sync_time.split(":")[1])
     times = []
     for i in range(0, 24, frequency):
@@ -844,4 +883,5 @@ def _start_scheduler_if_ready():
             logger.warning("Could not start scheduler: %s", e)
 
 def start(host="0.0.0.0", port=3000):
+    _start_scheduler_if_ready()
     app.run(host=host, port=port, debug=False, use_reloader=False)

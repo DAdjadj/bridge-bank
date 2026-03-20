@@ -19,6 +19,11 @@
   <form method="POST">
     <label for="notify_email" style="margin-top:0;">Send notifications to</label>
     <input type="email" id="notify_email" name="notify_email" value="{{ notify_email }}" placeholder="you@example.com" required>
+    <label for="notify_on">When to notify</label>
+    <select id="notify_on" name="notify_on">
+      <option value="all" {% if notify_on == "all" %}selected{% endif %}>All syncs</option>
+      <option value="errors" {% if notify_on == "errors" %}selected{% endif %}>Errors only</option>
+    </select>
     <label for="smtp_user">Email address to send from</label>
     <input type="text" id="smtp_user" name="smtp_user" value="{{ smtp_user }}" placeholder="you@icloud.com" autocomplete="off" required>
     <label for="smtp_password">App-specific password</label>
@@ -27,6 +32,17 @@
       <button type="button" class="toggle-pw" onclick="togglePw()" id="pw-btn">Show</button>
     </div>
     <div class="field-hint">For iCloud: use an app-specific password from <a href="https://appleid.apple.com" target="_blank">appleid.apple.com</a>. For Gmail: use an app password from your Google account security settings.</div>
+    <div style="margin-top:1rem;">
+      <button type="button" onclick="document.getElementById('smtp-advanced').hidden=!document.getElementById('smtp-advanced').hidden" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;padding:0;font-family:'Inter',sans-serif;">{% if smtp_from or smtp_host %}▾{% else %}▸{% endif %} Advanced SMTP settings</button>
+      <div id="smtp-advanced" {% if not smtp_from and not smtp_host %}hidden{% endif %}>
+        <label for="smtp_from">Sender address <span style="font-size:10px;color:#4a5568;font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
+        <input type="email" id="smtp_from" name="smtp_from" value="{{ smtp_from }}" placeholder="noreply@yourdomain.com" autocomplete="off">
+        <div class="field-hint">If your SMTP server sends from a different address than the login above.</div>
+        <label for="smtp_host">SMTP host <span style="font-size:10px;color:#4a5568;font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
+        <input type="text" id="smtp_host" name="smtp_host" value="{{ smtp_host }}" placeholder="smtp.gmail.com" autocomplete="off">
+        <div class="field-hint">Auto-detected for Gmail, iCloud, Outlook, Yahoo. Only set this if using a custom SMTP server.</div>
+      </div>
+    </div>
     <button type="button" class="btn btn-ghost" id="test-email-btn" onclick="sendTestEmail()" style="font-size:12px;margin-top:0.5rem;">Send test email</button>
     <div id="test-email-msg" style="font-size:12px;margin-top:6px;min-height:18px;"></div>
     <label for="holder_name">Your name on bank transfers <span style="font-size:10px;color:#4a5568;font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>

@@ -30,6 +30,10 @@ def start():
     sync_time = config.SYNC_TIME or "06:00"
     frequency = int(getattr(config, 'SYNC_FREQUENCY', '24') or '24')
 
+    if frequency == 0:
+        logger.info("Scheduler disabled (manual only mode)")
+        return
+
     logger.info("Scheduler starting. Sync at %s, every %dh", sync_time, frequency)
 
     if frequency == 24:

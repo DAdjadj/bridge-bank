@@ -60,7 +60,7 @@ input::placeholder { color: #4a5568; }
 .stat-row:last-child { border-bottom: none; }
 .stat-label { color: #94a3b8; }
 .stat-value { color: #e8edf5; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.connected-pill { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); color: #6ee7b7; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
+.connected-pill { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); color: #6ee7b7; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-block; white-space: nowrap; }
 
 /* Sync log table */
 .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }

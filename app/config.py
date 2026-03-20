@@ -22,6 +22,8 @@ SMTP_USER            = ""
 SMTP_PASSWORD        = ""
 SMTP_HOST            = ""
 SMTP_PORT            = "587"
+SMTP_FROM            = ""
+NOTIFY_ON            = "all"
 BRIDGE_BANK_URL      = ""
 
 def _load():

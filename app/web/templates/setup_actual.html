@@ -21,7 +21,10 @@
     <input type="text" id="actual_url" name="actual_url" value="{{ actual_url }}" placeholder="http://192.168.1.100:5006" autocomplete="off" required>
     <div class="field-hint">The address your server uses to reach Actual Budget.</div>
     <label for="actual_password">Password</label>
-    <input type="password" id="actual_password" name="actual_password" value="{{ actual_password }}" placeholder="Your Actual Budget password" required>
+    <div class="input-wrap">
+      <input type="password" id="actual_password" name="actual_password" value="{{ actual_password }}" placeholder="Your Actual Budget password" required>
+      <button type="button" class="toggle-pw" onclick="togglePw()" id="pw-btn">Show</button>
+    </div>
     <label for="actual_sync_id">Sync ID</label>
     <input type="text" id="actual_sync_id" name="actual_sync_id" value="{{ actual_sync_id }}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" required>
     <div class="field-hint">Settings &rarr; Show advanced settings &rarr; Sync ID inside Actual Budget.</div>
@@ -32,4 +35,12 @@
   </form>
 </div>
 
+<script>
+function togglePw() {
+  const f = document.getElementById('actual_password');
+  const b = document.getElementById('pw-btn');
+  if (f.type === 'password') { f.type = 'text'; b.textContent = 'Hide'; }
+  else { f.type = 'password'; b.textContent = 'Show'; }
+}
+</script>
 {% endblock %}

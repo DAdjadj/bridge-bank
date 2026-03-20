@@ -66,10 +66,15 @@
           </div>
         </div>
         <div style="display:flex;gap:6px;">
-          <form method="POST" action="/reset-sync" onsubmit="return confirm('Reset sync for this account? All transactions will be re-imported from the start date on the next sync.');">
-            <input type="hidden" name="account_id" value="{{ a.id }}">
-            <button type="submit" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;">Reset sync</button>
-          </form>
+          <div>
+            <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;" onclick="this.style.display='none';this.nextElementSibling.style.display='flex';" id="reset-btn-{{ a.id }}">Reset sync</button>
+            <form method="POST" action="/reset-sync" style="display:none;gap:4px;align-items:center;" id="reset-form-{{ a.id }}" onsubmit="return confirm('Reset sync for this account? Transactions from the selected date will be re-imported on the next sync.');">
+              <input type="hidden" name="account_id" value="{{ a.id }}">
+              <input type="date" name="reset_date" value="{{ a.start_sync_date or today }}" required style="font-size:11px;padding:4px 6px;">
+              <button type="submit" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;">Confirm</button>
+              <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;color:#4a5568;" onclick="this.parentElement.style.display='none';document.getElementById('reset-btn-{{ a.id }}').style.display='';">Cancel</button>
+            </form>
+          </div>
           <form method="POST" action="/disconnect" onsubmit="return confirm('Disconnect this bank account? Syncing will stop for this account until you reconnect.');">
             <input type="hidden" name="account_id" value="{{ a.id }}">
             <button type="submit" class="btn btn-danger">Disconnect</button>

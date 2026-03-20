@@ -50,21 +50,33 @@
 
 <div class="card">
   <div class="card-title" style="font-size:15px; margin-bottom:0.75rem;">Sync schedule</div>
-  <form method="POST" action="/setup/sync" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-    <div>
-      <label for="sync_time" style="margin-top:0;font-size:11px;">Daily sync time</label>
-      <input type="time" id="sync_time" name="sync_time" value="{{ sync_time }}" required style="margin-bottom:0;">
+  <form method="POST" action="/setup/sync" id="sync-form">
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+      <div id="freq-wrap">
+        <label for="sync_frequency" style="margin-top:0;font-size:11px;">Frequency</label>
+        <select id="sync_frequency" name="sync_frequency" style="margin-bottom:0;box-sizing:border-box;height:40px;" onchange="toggleStartTime()">
+          <option value="0" {% if sync_frequency == "0" %}selected{% endif %}>Manual only</option>
+          <option value="6" {% if sync_frequency == "6" %}selected{% endif %}>Every 6 hours</option>
+          <option value="12" {% if sync_frequency == "12" %}selected{% endif %}>Every 12 hours</option>
+          <option value="24" {% if sync_frequency == "24" %}selected{% endif %}>Every 24 hours</option>
+        </select>
+      </div>
+      <div id="start-time-wrap" {% if sync_frequency == "0" %}hidden{% endif %}>
+        <label for="sync_time" style="margin-top:0;font-size:11px;">Start time</label>
+        <input type="time" id="sync_time" name="sync_time" value="{{ sync_time }}" style="margin-bottom:0;box-sizing:border-box;height:40px;">
+      </div>
+      <button class="btn btn-ghost" type="submit" style="font-size:12px;">Save</button>
     </div>
-    <div>
-      <label for="sync_frequency" style="margin-top:0;font-size:11px;">Frequency</label>
-      <select id="sync_frequency" name="sync_frequency" style="margin-bottom:0;">
-        <option value="6" {% if sync_frequency == "6" %}selected{% endif %}>Every 6 hours</option>
-        <option value="12" {% if sync_frequency == "12" %}selected{% endif %}>Every 12 hours</option>
-        <option value="24" {% if sync_frequency == "24" %}selected{% endif %}>Every 24 hours</option>
-      </select>
-    </div>
-    <button class="btn btn-ghost" type="submit" style="font-size:12px;">Save</button>
+    {% if sync_frequency != "0" %}
+    <div style="font-size:12px;color:#94a3b8;margin-top:8px;">Syncs at {{ sync_times }}</div>
+    {% endif %}
   </form>
+  <script>
+  function toggleStartTime() {
+    var freq = document.getElementById('sync_frequency').value;
+    document.getElementById('start-time-wrap').hidden = (freq === '0');
+  }
+  </script>
 </div>
 
 <div class="card">
@@ -108,15 +120,15 @@
 </div>
 
 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-  <button class="btn btn-ghost" id="update-btn" onclick="runUpdate()" style="font-size:12px;{% if update_available %}background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;border-color:transparent;{% endif %}">{% if update_available %}Update available{% else %}Check for updates{% endif %}</button>
+  <button class="btn btn-ghost" id="update-btn" onclick="runUpdate()" style="font-size:12px;{% if update_available %}background:#10b981;color:#fff;border-color:transparent;{% endif %}">{% if update_available %}Update available{% else %}Check for updates{% endif %}</button>
   <button class="btn btn-ghost" id="download-logs-btn" onclick="downloadLogs()" style="font-size:12px;">Download logs</button>
   {% if activation_usage > 0 %}
   <form method="POST" action="/settings/deactivate" onsubmit="return confirm('This will deactivate your license on this machine. You can re-enter your key to reactivate. Continue?');" style="margin:0;">
     <button type="submit" class="btn btn-ghost" style="color:#ef4444;font-size:12px;">Deactivate license ({{ activation_usage }}/{{ activation_limit }})</button>
   </form>
   {% endif %}
-  <a href="/connect" style="margin-left:auto;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;text-decoration:none;">&larr; Bank</a>
 </div>
+<a href="/connect" style="display:block;text-align:center;margin-top:8px;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;border-radius:8px;padding:12px;font-size:14px;font-weight:600;text-decoration:none;">Manage banks</a>
 <div id="update-status" style="font-size:12px; color:#94a3b8; margin-top:0.5rem; display:none;"></div>
 
 <script>
@@ -181,7 +193,7 @@ fetch('/update/check').then(function(r) { return r.json(); }).then(function(d) {
   if (d.available) {
     var btn = document.getElementById('update-btn');
     btn.textContent = 'Update available';
-    btn.style.background = 'linear-gradient(135deg,#3b82f6,#6366f1)';
+    btn.style.background = '#10b981';
     btn.style.color = '#fff';
     btn.style.borderColor = 'transparent';
   }

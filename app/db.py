@@ -159,6 +159,15 @@ def add_bank_account(session_id: str, account_uid: str, bank_name: str, bank_cou
         )
         conn.commit()
 
+def update_bank_account_field(account_id: int, field: str, value: str):
+    allowed = {"start_sync_date", "session_id", "account_uid", "session_expiry", "actual_account"}
+    if field not in allowed:
+        raise ValueError(f"Field {field} is not updatable")
+    with _conn() as conn:
+        _ensure_tables(conn)
+        conn.execute(f"UPDATE bank_accounts SET {field} = ? WHERE id = ?", (value, account_id))
+        conn.commit()
+
 def remove_bank_account(account_id: int):
     with _conn() as conn:
         _ensure_tables(conn)
