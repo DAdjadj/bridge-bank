@@ -122,6 +122,14 @@
   <div id="update-status" style="font-size:12px; color:#94a3b8; margin-top:0.5rem; display:none;"></div>
 </div>
 
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div class="card-title" style="font-size:15px; margin-bottom:0;">Support</div>
+    <button class="btn btn-ghost" id="copy-logs-btn" onclick="copyLogs()" style="font-size:12px;">Copy logs</button>
+  </div>
+  <div id="logs-status" style="font-size:12px; color:#94a3b8; margin-top:0.5rem; display:none;"></div>
+</div>
+
 <div style="display:flex; justify-content:space-between; align-items:center;">
   {% if activation_usage > 0 %}
   <form method="POST" action="/settings/deactivate" onsubmit="return confirm('This will deactivate your license on this machine. You can re-enter your key to reactivate. Continue?');">
@@ -134,6 +142,34 @@
 </div>
 
 <script>
+async function copyLogs() {
+  var btn = document.getElementById('copy-logs-btn');
+  var status = document.getElementById('logs-status');
+  btn.textContent = 'Fetching...';
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/logs?lines=200');
+    var data = await resp.json();
+    if (data.logs) {
+      await navigator.clipboard.writeText(data.logs);
+      status.style.display = 'block';
+      status.textContent = 'Logs copied to clipboard. Paste them in your support email.';
+      status.style.color = '#10b981';
+      setTimeout(function() { status.style.display = 'none'; }, 5000);
+    } else {
+      status.style.display = 'block';
+      status.textContent = data.error || 'Could not fetch logs.';
+      status.style.color = '#ef4444';
+    }
+  } catch(e) {
+    status.style.display = 'block';
+    status.textContent = 'Could not fetch logs.';
+    status.style.color = '#ef4444';
+  }
+  btn.textContent = 'Copy logs';
+  btn.disabled = false;
+}
+
 async function runUpdate() {
   const btn = document.getElementById('update-btn');
   const status = document.getElementById('update-status');

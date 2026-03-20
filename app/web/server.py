@@ -669,6 +669,26 @@ def reset_sync():
     return redirect(url_for("connect"))
 
 # ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+
+@app.route("/api/logs")
+def api_logs():
+    """Return recent application logs for debugging."""
+    import subprocess
+    lines = request.args.get("lines", "200")
+    try:
+        result = subprocess.run(
+            ["docker", "logs", "--tail", lines, "bridge-bank"],
+            capture_output=True, text=True, timeout=10
+        )
+        # docker logs sends output to stderr
+        output = result.stdout + result.stderr
+        return jsonify({"logs": output})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ---------------------------------------------------------------------------
 # Banks
 # ---------------------------------------------------------------------------
 
