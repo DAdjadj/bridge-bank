@@ -27,6 +27,61 @@
   <div class="alert alert-warn">A bank connection expires in {{ days_left }} day{{ 's' if days_left != 1 else '' }}. <a href="/connect" style="color:inherit;font-weight:600;">Manage banks &rarr;</a></div>
 {% endif %}
 
+{% if show_review_prompt %}
+<div class="card" style="border-color:#3b82f6; border-width:1px;">
+  <div class="card-title" style="margin-bottom:0.25rem;">How's Bridge Bank working for you?</div>
+  <div class="card-sub" style="margin-bottom:1rem;">Your feedback helps other users find Bridge Bank.</div>
+  <form method="POST" action="/review/submit" id="review-form">
+    <div style="margin-bottom:1rem;">
+      <div id="star-rating" style="display:flex;gap:4px;font-size:28px;cursor:pointer;user-select:none;">
+        <span class="review-star" data-val="1">&#9734;</span>
+        <span class="review-star" data-val="2">&#9734;</span>
+        <span class="review-star" data-val="3">&#9734;</span>
+        <span class="review-star" data-val="4">&#9734;</span>
+        <span class="review-star" data-val="5">&#9734;</span>
+      </div>
+      <input type="hidden" name="rating" id="review-rating" value="" required>
+    </div>
+    <textarea name="review" placeholder="What do you like about Bridge Bank? Anything we could improve?" rows="3" required style="width:100%;box-sizing:border-box;background:#1a2235;border:1px solid #1e2a40;border-radius:8px;color:#e2e8f0;padding:0.75rem;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:0.75rem;"></textarea>
+    <input type="text" name="name" placeholder="Your name (optional)" style="width:100%;box-sizing:border-box;background:#1a2235;border:1px solid #1e2a40;border-radius:8px;color:#e2e8f0;padding:0.75rem;font-size:13px;font-family:inherit;margin-bottom:1rem;">
+    <div style="display:flex;align-items:center;gap:1rem;">
+      <button type="submit" class="btn" id="review-submit-btn" disabled style="background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;opacity:0.5;">Submit review</button>
+      <a href="/review/dismiss" onclick="event.preventDefault();fetch('/review/dismiss',{method:'POST'}).then(()=>location.reload());" style="font-size:13px;color:#64748b;text-decoration:none;">Maybe later</a>
+    </div>
+  </form>
+</div>
+<script>
+(function() {
+  var stars = document.querySelectorAll('.review-star');
+  var ratingInput = document.getElementById('review-rating');
+  var submitBtn = document.getElementById('review-submit-btn');
+  var currentRating = 0;
+  function setStars(n, hover) {
+    stars.forEach(function(s, i) {
+      s.innerHTML = (i < n) ? '&#9733;' : '&#9734;';
+      s.style.color = (i < n) ? '#f59e0b' : '#4a5568';
+    });
+  }
+  stars.forEach(function(star) {
+    star.addEventListener('click', function() {
+      currentRating = parseInt(this.dataset.val);
+      ratingInput.value = currentRating;
+      setStars(currentRating, false);
+      submitBtn.disabled = false;
+      submitBtn.style.opacity = '1';
+    });
+    star.addEventListener('mouseenter', function() {
+      setStars(parseInt(this.dataset.val), true);
+    });
+    star.addEventListener('mouseleave', function() {
+      setStars(currentRating, false);
+    });
+  });
+  setStars(0, false);
+})();
+</script>
+{% endif %}
+
 <div class="card">
   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.5rem;">
     <div>
@@ -37,7 +92,7 @@
   </div>
   <div class="stat-row">
     <span class="stat-label">Last sync</span>
-    <span class="stat-value">{{ last_sync or 'Never' }}</span>
+    <span class="stat-value utc-time">{{ last_sync or 'Never' }}</span>
   </div>
   <div class="stat-row"><span class="stat-label">Notifications</span><span class="stat-value">{{ notify_email or 'Disabled' }}</span></div>
   {% if total_tx >= 0 %}
@@ -112,7 +167,7 @@
       <tbody>
         {% for s in syncs %}
         <tr>
-          <td>{{ s.ran_at }}</td>
+          <td class="utc-time">{{ s.ran_at }}</td>
           <td><span class="badge {% if s.status == 'success' %}badge-success{% else %}badge-fail{% endif %}">{{ s.status }}</span></td>
           <td>{{ s.tx_count }}</td>
           <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ s.message }}">{{ s.message or '—' }}</td>
@@ -245,5 +300,12 @@ async function runSync() {
     btn.disabled = false;
   }
 }
+document.querySelectorAll('.utc-time').forEach(function(el) {
+  var raw = el.textContent.trim();
+  if (!raw || raw === 'Never') return;
+  var d = new Date(raw + 'Z');
+  if (isNaN(d)) return;
+  el.textContent = d.toLocaleString(undefined, {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+});
 </script>
 {% endblock %}

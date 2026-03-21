@@ -594,6 +594,19 @@ def status():
     ]
     fun_message = random.choice(fun_messages)
 
+    # Review prompt logic
+    show_review_prompt = False
+    if not act_info.get("is_trial", False) and not db.get_setting("review_dismissed") and not db.get_setting("review_submitted"):
+        first_sync = db.get_first_sync_date()
+        if first_sync:
+            try:
+                from datetime import datetime
+                first_dt = datetime.fromisoformat(first_sync)
+                if (datetime.now() - first_dt).days >= 7:
+                    show_review_prompt = True
+            except Exception:
+                pass
+
     return render_template("status.html",
         syncs=syncs,
         all_accounts=all_accounts,
@@ -616,6 +629,8 @@ def status():
         total_tx=total_tx,
         streak=streak,
         fun_message=fun_message,
+        show_review_prompt=show_review_prompt,
+        license_key=config.LICENCE_KEY,
     )
 
 # ---------------------------------------------------------------------------
@@ -657,6 +672,42 @@ def sync_now():
 @app.route("/api/sync-status")
 def sync_status():
     return jsonify({"running": _sync_running})
+
+# ---------------------------------------------------------------------------
+# Review
+# ---------------------------------------------------------------------------
+
+@app.route("/review/dismiss", methods=["POST"])
+def review_dismiss():
+    db.set_setting("review_dismissed", "1")
+    return redirect(url_for("status"))
+
+@app.route("/review/submit", methods=["POST"])
+def review_submit():
+    import requests as _requests
+    rating = request.form.get("rating", "").strip()
+    review_text = request.form.get("review", "").strip()
+    name = request.form.get("name", "").strip()
+    key = config.LICENCE_KEY
+    if not rating or not review_text or not key:
+        return redirect(url_for("status"))
+    try:
+        resp = _requests.post("https://api.bridgebank.app/review", json={
+            "license_key": key,
+            "name": name or None,
+            "rating": int(rating),
+            "review": review_text,
+        }, timeout=10)
+        if resp.status_code in (200, 201):
+            db.set_setting("review_submitted", "1")
+        else:
+            logger.warning("Review submit failed: %s %s", resp.status_code, resp.text)
+            # Still mark as submitted to avoid nagging on API errors
+            db.set_setting("review_submitted", "1")
+    except Exception as e:
+        logger.error("Review submit error: %s", e)
+        db.set_setting("review_submitted", "1")
+    return redirect(url_for("status"))
 
 
 # ---------------------------------------------------------------------------

@@ -168,6 +168,14 @@ def update_bank_account_field(account_id: int, field: str, value: str):
         conn.execute(f"UPDATE bank_accounts SET {field} = ? WHERE id = ?", (value, account_id))
         conn.commit()
 
+def get_first_sync_date() -> str:
+    with _conn() as conn:
+        _ensure_tables(conn)
+        row = conn.execute(
+            "SELECT ran_at FROM sync_log ORDER BY id ASC LIMIT 1"
+        ).fetchone()
+        return row["ran_at"] if row else ""
+
 def remove_bank_account(account_id: int):
     with _conn() as conn:
         _ensure_tables(conn)
