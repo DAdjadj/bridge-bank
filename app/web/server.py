@@ -217,6 +217,10 @@ def test_email():
         config.set("SMTP_USER", data["smtp_user"].strip())
     if data.get("smtp_password"):
         config.set("SMTP_PASSWORD", data["smtp_password"].strip())
+      if data.get("smtp_from"):
+        config.set("SMTP_FROM", data["smtp_from"].strip())
+    if data.get("smtp_host"):
+        config.set("SMTP_HOST", data["smtp_host"].strip())
     try:
         from .. import email_notify
         email_notify.send("Bridge Bank: test email", "This is a test email from Bridge Bank. If you're reading this, your email notifications are working correctly.", raise_on_error=True)
