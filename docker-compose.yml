@@ -7,6 +7,7 @@ services:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/compose:ro
+      - ./app/web/server.py:/app/app/web/server.py:ro
     ports:
       - "3002:3000"
 
@@ -17,6 +18,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --cleanup --interval 86400 --http-api-update --http-api-periodic-polls bridge-bank
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       - WATCHTOWER_LOG_LEVEL=warn
       - WATCHTOWER_HTTP_API_TOKEN=bridge-bank-update

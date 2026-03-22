@@ -254,7 +254,61 @@ def setup_sync():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
+    from datetime import datetime, timezone
+    import schedule as _sched
+
+    status = "ok"
+    checks = {}
+
+    # Last sync check
+    recent = db.get_recent_syncs(limit=1)
+    if recent:
+        last = recent[0]
+        checks["last_sync"] = {
+            "ran_at": last["ran_at"],
+            "status": last["status"],
+            "message": last.get("message", ""),
+        }
+        if last["status"] != "success":
+            status = "degraded"
+        # Check if sync is overdue (more than frequency + 2h buffer)
+        try:
+            freq = int(getattr(config, "SYNC_FREQUENCY", "24") or "24")
+            if freq > 0:
+                last_dt = datetime.fromisoformat(last["ran_at"]).replace(tzinfo=timezone.utc)
+                hours_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+                checks["hours_since_last_sync"] = round(hours_since, 1)
+                if hours_since > freq + 2:
+                    status = "degraded"
+                    checks["sync_overdue"] = True
+        except Exception:
+            pass
+    else:
+        checks["last_sync"] = None
+
+    # Bank session expiry check
+    accounts = db.get_all_bank_accounts()
+    expiring = []
+    for acc in accounts:
+        if acc.get("session_expiry"):
+            try:
+                exp_dt = datetime.fromisoformat(acc["session_expiry"]).replace(tzinfo=timezone.utc)
+                days_left = (exp_dt - datetime.now(timezone.utc)).days
+                if days_left < 7:
+                    expiring.append({"bank": acc["bank_name"], "days_left": days_left})
+                    if days_left <= 0:
+                        status = "unhealthy"
+            except Exception:
+                pass
+    checks["banks_connected"] = len(accounts)
+    if expiring:
+        checks["sessions_expiring_soon"] = expiring
+
+    # Scheduler check
+    checks["scheduler_jobs"] = len(_sched.get_jobs())
+
+    code = 200 if status == "ok" else (200 if status == "degraded" else 503)
+    return jsonify({"status": status, **checks}), code
 
 @app.route("/api/version")
 def api_version():

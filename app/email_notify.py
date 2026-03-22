@@ -67,13 +67,13 @@ def _friendly_smtp_error(e):
     return f"Email failed: {e}"
 
 
-def send_success(tx_count: int):
+def send_success(tx_count: int, details: list = None):
     if config.NOTIFY_ON == "errors":
         return
-    send(
-        "Bridge Bank: sync complete",
-        f"Sync completed successfully. {tx_count} transaction(s) imported."
-    )
+    body = f"Sync completed successfully. {tx_count} transaction(s) imported."
+    if details:
+        body += "\n\n" + "\n".join(f"  ✓ {d}" for d in details)
+    send("Bridge Bank: sync complete", body)
 
 
 def send_failure(message: str):
@@ -91,6 +91,13 @@ def send_partial(successes: list, errors: list):
         lines.append(f"  ✗ {e}")
     body = "Sync finished with some errors:\n\n" + "\n".join(lines) + f"\n\nOpen Bridge Bank at {config.BRIDGE_BANK_URL} to check your configuration."
     send("Bridge Bank: sync partially complete", body)
+
+
+def send_trial_expiry_warning(days_left: int):
+    send(
+        f"Bridge Bank: trial expires in {days_left} days",
+        f"Your Bridge Bank free trial expires in {days_left} days.\n\nPurchase a licence at https://bridgebank.app to keep syncing your transactions."
+    )
 
 
 def send_session_expiry_warning(days_left: int):

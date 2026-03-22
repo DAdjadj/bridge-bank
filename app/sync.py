@@ -237,11 +237,17 @@ def _sync_account(account, state):
                                 if ref: imported_refs.add(ref)
                                 skipped += 1
                         else:
-                            t = reconcile_transaction(
-                                actual.session, date, account_obj, payee, notes,
-                                None, amount, imported_id=ref or None, cleared=True,
-                                already_matched=already_matched
-                            )
+                            try:
+                                t = reconcile_transaction(
+                                    actual.session, date, account_obj, payee, notes,
+                                    None, amount, imported_id=ref or None, cleared=True,
+                                    already_matched=already_matched
+                                )
+                            except Exception:
+                                t = create_transaction(
+                                    actual.session, date, account_obj, payee, notes,
+                                    amount, cleared=True, imported_payee=payee
+                                )
                             already_matched.append(t)
                             if t.changed():
                                 if ref: imported_refs.add(ref)
@@ -283,6 +289,18 @@ def run():
         db.log_sync("failure", message=msg)
         return False, 0, msg
 
+    # Trial expiry warning
+    try:
+        act_info = licence.get_activation_info()
+        if act_info.get("is_trial") and act_info.get("expires_at"):
+            expires = datetime.date.fromisoformat(act_info["expires_at"][:10])
+            days_left = (expires - datetime.date.today()).days
+            if 0 < days_left <= 7:
+                log.warning("Trial expires in %d days", days_left)
+                email_notify.send_trial_expiry_warning(days_left)
+    except Exception:
+        pass
+
     all_accounts = db.get_all_bank_accounts()
     if not all_accounts:
         msg = "No bank connection found. Please connect your bank."
@@ -318,7 +336,7 @@ def run():
     elif errors:
         email_notify.send_partial(successes, errors)
     else:
-        email_notify.send_success(total_added)
+        email_notify.send_success(total_added, successes)
 
     # Check for updates silently
     try:
