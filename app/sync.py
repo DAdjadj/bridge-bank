@@ -267,7 +267,7 @@ def _sync_account(account, state):
             log.info("Done %s: %d added, %d confirmed, %d skipped", bank_label, added, updated, skipped)
 
     except Exception as e:
-        msg = f"{bank_label}: Could not connect to Actual Budget. Make sure Actual Budget is running and reachable at {config.ACTUAL_URL}."
+        msg = f"{bank_label}: Could not connect to Actual Budget at {config.ACTUAL_URL}. Error: {e}"
         log.error(msg)
         return False, 0, msg
 
