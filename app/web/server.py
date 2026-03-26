@@ -451,7 +451,7 @@ def connect():
         pem_ready=pem_ready,
         eb_app_id=config.EB_APPLICATION_ID or db.get_setting("eb_app_id"),
         bank_account_limit=bank_account_limit,
-        bank_slot_url=f"https://buy.stripe.com/4gM9AMg348nt2Y7185cMM04?client_reference_id={config.LICENCE_KEY}",
+        bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="connect",
     )
@@ -496,7 +496,7 @@ def reauthorise():
         pem_ready=True,
         eb_app_id=config.EB_APPLICATION_ID or db.get_setting("eb_app_id"),
         bank_account_limit=bank_account_limit,
-        bank_slot_url=f"https://buy.stripe.com/4gM9AMg348nt2Y7185cMM04?client_reference_id={config.LICENCE_KEY}",
+        bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="connect",
     )
