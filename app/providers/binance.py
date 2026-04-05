@@ -2,9 +2,10 @@ import hashlib
 import hmac
 import logging
 import time
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import requests
 from .base import BalanceProvider
+from .etoro import _usd_to_eur
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +74,12 @@ class BinanceProvider(BalanceProvider):
                 total += amount * price_map[f"{asset}USDT"]
             elif f"{asset}BUSD" in price_map:
                 total += amount * price_map[f"{asset}BUSD"]
-        return total
+
+        # Convert USDT total to EUR
+        rate = _usd_to_eur()
+        total_eur = (total * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        log.info("Binance: %s USDT * %s = %s EUR", total, rate, total_eur)
+        return total_eur
 
     def get_currency(self, credentials: dict) -> str:
-        return "USD"
+        return "EUR"
