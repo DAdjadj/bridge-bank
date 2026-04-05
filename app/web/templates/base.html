@@ -9,31 +9,53 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="wrap">
-    <a class="logo" href="/">
-      <div class="logo-mark">&#x27F7;</div>
-      <span class="logo-name">Bridge Bank</span>
-    </a>
-    {% block steps %}{% endblock %}
-    {% block content %}{% endblock %}
-    {% block nav %}
-    <nav class="footer-nav">
-      <a href="/setup" {% if active == 'license' %}class="active"{% endif %}>License</a>
-      <a href="/setup/actual" {% if active == 'actual' %}class="active"{% endif %}>Actual Budget</a>
-      <a href="/setup/notifications" {% if active == 'notifications' %}class="active"{% endif %}>Notifications</a>
-      <a href="/bank" {% if active == 'bank' %}class="active"{% endif %}>Bank</a>
-      <a href="/status" {% if active == 'status' %}class="active"{% endif %}>Status</a>
-    </nav>
-    {% endblock %}
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="logo" href="/">
+        <div class="logo-mark">&#x27F7;</div>
+        <span class="logo-name">Bridge Bank</span>
+      </a>
+      <nav class="sidebar-nav">
+        <a href="/setup" {% if active == 'license' %}class="active"{% endif %}>
+          <span class="nav-icon">&#x1F511;</span> License
+        </a>
+        <a href="/setup/actual" {% if active == 'actual' %}class="active"{% endif %}>
+          <span class="nav-icon">&#x1F4B0;</span> Actual Budget
+        </a>
+        <a href="/setup/notifications" {% if active == 'notifications' %}class="active"{% endif %}>
+          <span class="nav-icon">&#x2709;</span> Notifications
+        </a>
+        <a href="/bank" {% if active == 'bank' %}class="active"{% endif %}>
+          <span class="nav-icon">&#x1F3E6;</span> Bank
+        </a>
+        <a href="/status" {% if active == 'status' %}class="active"{% endif %}>
+          <span class="nav-icon">&#x2713;</span> Status
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <a href="mailto:support@david-alves.com">Support</a>
+        <a href="https://bridgebank.app/privacy" target="_blank">Privacy</a>
+        <a href="https://bridgebank.app/terms" target="_blank">Terms</a>
+        <a href="https://github.com/DAdjadj/bridge-bank" target="_blank">GitHub</a>
+        <span style="color:#333;font-size:11px;margin-top:0.5rem;">v{{ app_version }}</span>
+      </div>
+    </aside>
+    <main class="main-content">
+      <div class="wrap">
+        {% block steps %}{% endblock %}
+        {% block content %}{% endblock %}
+      </div>
+    </main>
   </div>
-  <footer class="app-footer" style="justify-content:space-between;">
-    <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
-      <a href="mailto:support@david-alves.com">Support</a>
-      <a href="https://bridgebank.app/privacy" target="_blank">Privacy</a>
-      <a href="https://bridgebank.app/terms" target="_blank">Terms</a>
-      <a href="https://github.com/DAdjadj/bridge-bank" target="_blank">GitHub</a>
-    </div>
-    <span style="color:#333;font-size:12px;">v{{ app_version }}</span>
-  </footer>
+  <!-- Mobile bottom nav (hidden on desktop) -->
+  {% block nav %}
+  <nav class="footer-nav">
+    <a href="/setup" {% if active == 'license' %}class="active"{% endif %}>License</a>
+    <a href="/setup/actual" {% if active == 'actual' %}class="active"{% endif %}>Actual Budget</a>
+    <a href="/setup/notifications" {% if active == 'notifications' %}class="active"{% endif %}>Notifications</a>
+    <a href="/bank" {% if active == 'bank' %}class="active"{% endif %}>Bank</a>
+    <a href="/status" {% if active == 'status' %}class="active"{% endif %}>Status</a>
+  </nav>
+  {% endblock %}
 </body>
 </html>
