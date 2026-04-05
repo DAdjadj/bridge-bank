@@ -22,8 +22,11 @@ import os
 APP_VERSION = os.environ.get("APP_VERSION", "dev")
 
 @app.context_processor
-def inject_version():
-    return {"app_version": APP_VERSION}
+def inject_globals():
+    return {
+        "app_version": APP_VERSION,
+        "sidebar_enabled": db.get_setting("enable_sidebar") == "1",
+    }
 
 def _detect_container_name():
     """Detect container name from mounted compose file or fall back to default."""
