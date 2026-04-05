@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bridge Bank Sidebar Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #080b12;
+      --shell: #0b1020;
+      --panel: #0f1420;
+      --panel-soft: #12192b;
+      --border: #1e2a40;
+      --border-strong: #253450;
+      --text: #e8edf5;
+      --muted: #94a3b8;
+      --blue-a: #3b82f6;
+      --blue-b: #6366f1;
+      --green: #10b981;
+      --green-soft: rgba(16, 185, 129, 0.12);
+      --danger: #ef4444;
+      --danger-soft: rgba(239, 68, 68, 0.12);
+      --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+    }
+
+    * { box-sizing: border-box; }
+    html { font-size: 16px; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Inter", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(59, 130, 246, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 32%),
+        linear-gradient(180deg, #09101c 0%, var(--bg) 100%);
+      padding: 32px;
+    }
+
+    .app-shell {
+      max-width: 1480px;
+      min-height: calc(100vh - 64px);
+      margin: 0 auto;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 22%), var(--shell);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-rows: 84px minmax(0, 1fr);
+    }
+
+    .chrome-bar {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 24px;
+      padding: 0 28px;
+      background: rgba(11, 16, 32, 0.92);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .traffic-lights { display: flex; gap: 12px; }
+    .traffic-lights span {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      box-shadow: inset 0 1px 1px rgba(255,255,255,0.2);
+    }
+    .red { background: #ff5f57; }
+    .yellow { background: #febc2e; }
+    .green { background: #28c840; }
+
+    .address-bar {
+      min-width: min(560px, 100%);
+      padding: 14px 20px;
+      border-radius: 18px;
+      background: rgba(8, 11, 18, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      color: #cbd5e1;
+      text-align: center;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .chrome-meta {
+      justify-self: end;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: 0;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      padding: 30px 22px;
+      background: linear-gradient(180deg, rgba(59,130,246,0.06), transparent 24%), #0d1321;
+      border-right: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .brand-mark {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--blue-a), var(--blue-b));
+      color: #fff;
+      font-size: 1.1rem;
+      box-shadow: 0 10px 24px rgba(59, 130, 246, 0.24);
+    }
+
+    .brand-copy strong {
+      display: block;
+      font-size: 1.45rem;
+      letter-spacing: -0.04em;
+    }
+    .brand-copy span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .rail-label {
+      margin: 0 0 12px;
+      color: rgba(148, 163, 184, 0.72);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .sidebar-nav { display: flex; flex-direction: column; gap: 6px; }
+    .sidebar-nav a {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: relative;
+      padding: 14px 14px 14px 16px;
+      border-radius: 14px;
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 600;
+      transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+    .sidebar-nav a:hover {
+      background: rgba(18, 25, 43, 0.92);
+      color: var(--text);
+      transform: translateX(2px);
+    }
+    .sidebar-nav a.active {
+      background: linear-gradient(90deg, rgba(59, 130, 246, 0.18), transparent 90%), rgba(18, 25, 43, 0.96);
+      color: var(--text);
+      box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.16);
+    }
+    .sidebar-nav a.active::before {
+      content: "";
+      position: absolute;
+      left: -22px;
+      top: 10px;
+      bottom: 10px;
+      width: 4px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--green), #22c55e);
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.42);
+    }
+
+    .nav-icon { width: 26px; text-align: center; flex-shrink: 0; }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding-top: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      border-top: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    .sidebar-footer a, .sidebar-footer span {
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-decoration: none;
+    }
+
+    .content {
+      overflow: auto;
+      padding: 28px 34px 34px;
+      background: radial-gradient(circle at top right, rgba(16,185,129,0.05), transparent 26%), rgba(8,11,18,0.52);
+    }
+
+    .dashboard {
+      min-height: 100%;
+      padding: 24px;
+      border-radius: 24px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 18%), rgba(9,15,26,0.96);
+    }
+
+    .mobile-nav { display: none; gap: 10px; overflow: auto; margin-bottom: 18px; padding-bottom: 4px; }
+    .mobile-nav a {
+      flex: 0 0 auto;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(18,25,43,0.92);
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .mobile-nav a.active {
+      color: var(--text);
+      border-color: rgba(16,185,129,0.26);
+      box-shadow: inset 0 0 0 1px rgba(16,185,129,0.18);
+    }
+
+    .screen { display: none; animation: rise 360ms ease both; }
+    .screen.active { display: block; }
+
+    .page-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+    .page-title {
+      margin: 0;
+      font-size: clamp(2rem, 3vw, 2.85rem);
+      letter-spacing: -0.05em;
+      line-height: 1;
+    }
+    .page-sub {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 1rem;
+      max-width: 620px;
+    }
+
+    .steps {
+      display: flex;
+      gap: 6px;
+      max-width: 340px;
+      margin-bottom: 24px;
+    }
+    .step {
+      flex: 1;
+      height: 4px;
+      border-radius: 999px;
+      background: var(--border);
+    }
+    .step.active { background: linear-gradient(90deg, var(--blue-a), var(--blue-b)); }
+    .step.done { background: linear-gradient(90deg, var(--green), #22c55e); }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .stack { display: grid; gap: 18px; }
+
+    .card {
+      background: linear-gradient(180deg, rgba(18,25,43,0.94), rgba(15,20,32,0.96));
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+      margin-bottom: 18px;
+    }
+    .card:last-child { margin-bottom: 0; }
+    .card-title {
+      margin: 0 0 4px;
+      font-size: 1.75rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+    .card-sub {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 0.96rem;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 1.12rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .card-head.compact { margin-bottom: 16px; }
+
+    .btn {
+      appearance: none;
+      border-radius: 14px;
+      padding: 13px 18px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary {
+      border: none;
+      color: #fff;
+      background: linear-gradient(135deg, var(--blue-a), var(--blue-b));
+      box-shadow: 0 16px 28px rgba(59,130,246,0.22);
+    }
+    .btn-ghost {
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      color: var(--text);
+      background: rgba(18,25,43,0.92);
+    }
+    .btn-success {
+      border: none;
+      color: #fff;
+      background: linear-gradient(135deg, var(--green), #059669);
+      box-shadow: 0 16px 28px rgba(16,185,129,0.18);
+    }
+    .btn-danger {
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      background: var(--danger-soft);
+    }
+
+    label {
+      display: block;
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    input, select {
+      width: 100%;
+      height: 46px;
+      border-radius: 12px;
+      border: 1px solid var(--border-strong);
+      background: rgba(8,11,18,0.86);
+      color: var(--text);
+      font: inherit;
+      padding: 0 14px;
+      outline: none;
+    }
+
+    .field-hint {
+      margin-top: 8px;
+      color: #64748b;
+      font-size: 0.84rem;
+      line-height: 1.55;
+    }
+
+    .alert {
+      margin-bottom: 16px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      font-size: 0.92rem;
+      line-height: 1.55;
+      border: 1px solid rgba(245, 158, 11, 0.24);
+      background: rgba(245, 158, 11, 0.08);
+      color: #fcd34d;
+    }
+    .alert.success {
+      border-color: rgba(16, 185, 129, 0.2);
+      background: var(--green-soft);
+      color: #6ee7b7;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(148,163,184,0.1);
+      font-size: 0.98rem;
+    }
+    .stat-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .stat-label { color: var(--muted); }
+    .stat-value { color: var(--text); font-weight: 600; text-align: right; }
+
+    .inline-actions, .actions-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .actions-row { margin-top: 18px; }
+
+    .connected-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #6ee7b7;
+      background: var(--green-soft);
+      border: 1px solid rgba(16,185,129,0.22);
+    }
+
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      padding: 16px 10px 16px 0;
+      text-align: left;
+      border-bottom: 1px solid rgba(148,163,184,0.1);
+      vertical-align: middle;
+    }
+    th {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    td { color: #cbd5e1; font-size: 0.96rem; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 98px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      font-size: 0.88rem;
+      font-weight: 700;
+    }
+    .badge-success {
+      color: #6ee7b7;
+      background: var(--green-soft);
+      border: 1px solid rgba(16,185,129,0.22);
+    }
+    .badge-fail {
+      color: #fca5a5;
+      background: var(--danger-soft);
+      border: 1px solid rgba(239,68,68,0.2);
+    }
+
+    .small-card {
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px solid var(--border-strong);
+      background: rgba(8,11,18,0.56);
+    }
+    .small-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+    .small-card strong {
+      display: block;
+      margin-top: 8px;
+      color: var(--text);
+      font-size: 0.96rem;
+    }
+
+    .manage-link {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      margin-top: 10px;
+      padding: 14px 18px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--blue-a), var(--blue-b));
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+      box-shadow: 0 16px 28px rgba(59,130,246,0.22);
+    }
+    .update-status { margin-top: 10px; color: var(--muted); font-size: 0.9rem; }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 1080px) {
+      body { padding: 18px; }
+      .app-shell {
+        min-height: calc(100vh - 36px);
+        grid-template-rows: 76px minmax(0, 1fr);
+      }
+      .workspace { grid-template-columns: 240px minmax(0, 1fr); }
+      .content { padding: 22px; }
+      .dashboard { padding: 18px; }
+    }
+
+    @media (max-width: 900px) {
+      body { padding: 0; }
+      .app-shell {
+        max-width: none;
+        min-height: 100vh;
+        border-radius: 0;
+      }
+      .chrome-bar {
+        grid-template-columns: auto 1fr;
+        gap: 14px;
+      }
+      .address-bar { min-width: 0; width: 100%; }
+      .chrome-meta { display: none; }
+      .workspace { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .content { padding: 16px; }
+      .dashboard { padding: 16px; border-radius: 20px; }
+      .mobile-nav { display: flex; }
+      .layout-grid { grid-template-columns: 1fr; }
+      .page-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .chrome-bar { padding: 0 16px; }
+      .traffic-lights span { width: 12px; height: 12px; }
+      th:nth-child(4), td:nth-child(4) { display: none; }
+      .actions-row > *, .inline-actions > * { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="chrome-bar">
+      <div class="traffic-lights" aria-hidden="true">
+        <span class="red"></span>
+        <span class="yellow"></span>
+        <span class="green"></span>
+      </div>
+      <div class="address-bar">http://bridge-bank.local/<span id="route-label">status</span></div>
+      <div class="chrome-meta">Sidebar preview</div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar">
+        <a class="brand" href="#status">
+          <div class="brand-mark">&#x27F7;</div>
+          <div class="brand-copy">
+            <strong>Bridge Bank</strong>
+            <span>Bank sync dashboard</span>
+          </div>
+        </a>
+
+        <p class="rail-label">Workspace</p>
+        <nav class="sidebar-nav" aria-label="Primary">
+          <a href="#license" data-screen-link="license"><span class="nav-icon">&#x1F511;</span>License</a>
+          <a href="#actual" data-screen-link="actual"><span class="nav-icon">&#x1F4B0;</span>Actual Budget</a>
+          <a href="#notifications" data-screen-link="notifications"><span class="nav-icon">&#x2709;</span>Notifications</a>
+          <a href="#bank" data-screen-link="bank"><span class="nav-icon">&#x1F3E6;</span>Bank</a>
+          <a href="#status" data-screen-link="status"><span class="nav-icon">&#x2713;</span>Status</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <a href="#">Support</a>
+          <a href="#">Privacy</a>
+          <a href="#">Terms</a>
+          <a href="#">GitHub</a>
+          <span>v2026.04.05</span>
+        </div>
+      </aside>
+
+      <section class="content">
+        <nav class="mobile-nav" aria-label="Sections">
+          <a href="#license" data-screen-link="license">License</a>
+          <a href="#actual" data-screen-link="actual">Actual Budget</a>
+          <a href="#notifications" data-screen-link="notifications">Notifications</a>
+          <a href="#bank" data-screen-link="bank">Bank</a>
+          <a href="#status" data-screen-link="status">Status</a>
+        </nav>
+
+        <div class="dashboard">
+          <section class="screen" data-screen="license">
+            <div class="steps">
+              <div class="step active"></div>
+              <div class="step"></div>
+              <div class="step"></div>
+              <div class="step"></div>
+              <div class="step"></div>
+            </div>
+            <div class="page-head">
+              <div>
+                <h1 class="page-title">License</h1>
+                <p class="page-sub">Step 1 of 5. Enter your license key to get started.</p>
+              </div>
+            </div>
+            <div class="card" style="max-width:780px;">
+              <h2 class="card-title">Welcome to Bridge Bank</h2>
+              <p class="card-sub">The same onboarding content, now inside the desktop sidebar shell.</p>
+              <label for="license_key">License key</label>
+              <input id="license_key" type="text" value="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX">
+              <div class="field-hint">Don't have one? Purchase at bridgebank.app or start a free trial.</div>
+              <div class="actions-row">
+                <button class="btn btn-primary">Continue &rarr;</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="actual">
+            <div class="steps">
+              <div class="step done"></div>
+              <div class="step active"></div>
+              <div class="step"></div>
+              <div class="step"></div>
+              <div class="step"></div>
+            </div>
+            <div class="page-head">
+              <div>
+                <h1 class="page-title">Actual Budget</h1>
+                <p class="page-sub">Step 2 of 5. Configure your self-hosted Actual Budget instance.</p>
+              </div>
+            </div>
+            <div class="card" style="max-width:860px;">
+              <h2 class="card-title">Actual Budget</h2>
+              <p class="card-sub">Your existing fields and hints, shown in the new desktop frame.</p>
+              <label for="actual_url">Actual Budget URL</label>
+              <input id="actual_url" type="text" value="http://192.168.1.100:5006">
+              <div class="field-hint">The address your server uses to reach Actual Budget.</div>
+              <label for="actual_password" style="margin-top:18px;">Password</label>
+              <input id="actual_password" type="text" value="super-secret">
+              <label for="actual_sync_id" style="margin-top:18px;">Sync ID</label>
+              <input id="actual_sync_id" type="text" value="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+              <label for="actual_account" style="margin-top:18px;">Account name</label>
+              <input id="actual_account" type="text" value="Revolut">
+              <div class="actions-row">
+                <button class="btn btn-primary">Continue &rarr;</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="notifications">
+            <div class="steps">
+              <div class="step done"></div>
+              <div class="step done"></div>
+              <div class="step active"></div>
+              <div class="step"></div>
+              <div class="step"></div>
+            </div>
+            <div class="page-head">
+              <div>
+                <h1 class="page-title">Notifications</h1>
+                <p class="page-sub">Step 3 of 5. Configure how Bridge Bank emails you about syncs and issues.</p>
+              </div>
+            </div>
+            <div class="layout-grid">
+              <div class="stack">
+                <div class="card">
+                  <h2 class="card-title">Notifications</h2>
+                  <p class="card-sub">Step 3 of 5 — how should Bridge Bank notify you?</p>
+                  <label for="notify_email">Send notifications to</label>
+                  <input id="notify_email" type="email" value="you@example.com">
+                  <label for="notify_on" style="margin-top:18px;">When to notify</label>
+                  <select id="notify_on">
+                    <option>All syncs</option>
+                    <option>Errors only</option>
+                  </select>
+                  <label for="smtp_user" style="margin-top:18px;">Email address to send from</label>
+                  <input id="smtp_user" type="text" value="you@icloud.com">
+                  <label for="holder_name" style="margin-top:18px;">Your name on bank transfers</label>
+                  <input id="holder_name" type="text" value="John Doe,JOHN DOE">
+                  <div class="actions-row">
+                    <button class="btn btn-ghost">Send test email</button>
+                    <button class="btn btn-primary">Continue &rarr;</button>
+                  </div>
+                </div>
+              </div>
+              <div class="stack">
+                <div class="card">
+                  <h3 class="section-title">Email preferences</h3>
+                  <p class="card-sub" style="margin-top:6px;">This controls all emails from Bridge Bank.</p>
+                  <div class="stat-row">
+                    <span class="stat-label">Current status</span>
+                    <span class="stat-value">Receiving email notifications</span>
+                  </div>
+                  <div class="actions-row">
+                    <button class="btn btn-danger">Stop all emails</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="bank">
+            <div class="steps">
+              <div class="step done"></div>
+              <div class="step done"></div>
+              <div class="step done"></div>
+              <div class="step active"></div>
+              <div class="step"></div>
+            </div>
+            <div class="page-head">
+              <div>
+                <h1 class="page-title">Bank</h1>
+                <p class="page-sub">Step 4 of 5. Connect a bank and choose where it syncs inside Actual Budget.</p>
+              </div>
+            </div>
+            <div class="alert success">Bank connected. Your first sync will run shortly.</div>
+            <div class="layout-grid">
+              <div class="stack">
+                <div class="card">
+                  <h2 class="card-title">Connect your bank</h2>
+                  <p class="card-sub">Search for your bank and authorise read-only access.</p>
+                  <div class="small-card" style="margin-bottom:16px;">
+                    <p>Private key loaded</p>
+                    <strong>Ready to connect another bank.</strong>
+                  </div>
+                  <label for="start_sync_date">Start syncing from</label>
+                  <input id="start_sync_date" type="date" value="2026-04-05">
+                  <label for="bank_actual_account" style="margin-top:18px;">Actual Budget account</label>
+                  <input id="bank_actual_account" type="text" value="Revolut">
+                  <label for="bank_search" style="margin-top:18px;">Search your bank</label>
+                  <input id="bank_search" type="text" value="revolut">
+                  <div class="small-card" style="margin-top:12px;">
+                    <p>Selected bank</p>
+                    <strong>Revolut (PT)</strong>
+                  </div>
+                  <div class="actions-row">
+                    <button class="btn btn-success">Add bank &rarr;</button>
+                  </div>
+                </div>
+              </div>
+              <div class="stack">
+                <div class="card">
+                  <h3 class="section-title">Connected accounts</h3>
+                  <div class="small-card" style="margin-bottom:12px;">
+                    <span class="connected-pill">Connected</span>
+                    <strong>1. Revolut (PT) → Revolut</strong>
+                    <div class="inline-actions" style="margin-top:12px;">
+                      <button class="btn btn-ghost">Reset sync</button>
+                      <button class="btn btn-danger">Disconnect</button>
+                    </div>
+                  </div>
+                  <div class="small-card">
+                    <span class="connected-pill">Connected</span>
+                    <strong>2. N26 (PT) → N26</strong>
+                    <div class="inline-actions" style="margin-top:12px;">
+                      <button class="btn btn-ghost">Re-authorise</button>
+                      <button class="btn btn-danger">Disconnect</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="status">
+            <div class="steps">
+              <div class="step done"></div>
+              <div class="step done"></div>
+              <div class="step done"></div>
+              <div class="step done"></div>
+              <div class="step done"></div>
+            </div>
+            <div class="page-head">
+              <div>
+                <h1 class="page-title">Status</h1>
+                <p class="page-sub">Syncing like clockwork.</p>
+              </div>
+              <button class="btn btn-primary">Sync now</button>
+            </div>
+            <div class="alert">A bank connection expires in 6 days. Manage banks to refresh consent before syncing stops.</div>
+            <div class="layout-grid">
+              <div class="stack">
+                <section class="card">
+                  <div class="card-head">
+                    <div>
+                      <h2 class="card-title">Status</h2>
+                      <p class="card-sub">Same status content, kept intact inside the bolder shell.</p>
+                    </div>
+                    <button class="btn btn-ghost">Sync now</button>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Last sync</span>
+                    <span class="stat-value">Apr 5, 2026, 22:33</span>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Notifications</span>
+                    <span class="stat-value">david.a.alves@icloud.com</span>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Transactions synced</span>
+                    <span class="stat-value">61</span>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Sync streak</span>
+                    <span class="stat-value">25 in a row</span>
+                  </div>
+                </section>
+                <section class="card">
+                  <div class="card-head compact">
+                    <h3 class="section-title">Sync log</h3>
+                    <button class="btn btn-ghost">Clear log</button>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Status</th>
+                          <th>Transactions</th>
+                          <th>Note</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>Apr 5, 2026, 22:33</td>
+                          <td><span class="badge badge-success">success</span></td>
+                          <td>1</td>
+                          <td>eToro → E-Toro</td>
+                        </tr>
+                        <tr>
+                          <td>Apr 5, 2026, 22:33</td>
+                          <td><span class="badge badge-success">success</span></td>
+                          <td>0</td>
+                          <td>Revolut (PT) → Budget</td>
+                        </tr>
+                        <tr>
+                          <td>Apr 5, 2026, 22:32</td>
+                          <td><span class="badge badge-fail">failure</span></td>
+                          <td>0</td>
+                          <td>N26 (PT) → consent expired</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+              <div class="stack">
+                <section class="card">
+                  <div class="card-head compact">
+                    <h3 class="section-title">Sync schedule</h3>
+                  </div>
+                  <label for="status_sync_frequency">Frequency</label>
+                  <div class="inline-actions">
+                    <div style="min-width:180px;flex:1;">
+                      <select id="status_sync_frequency">
+                        <option>Manual only</option>
+                        <option>Every 6 hours</option>
+                        <option selected>Every 12 hours</option>
+                        <option>Every 24 hours</option>
+                      </select>
+                    </div>
+                    <div style="width:120px;">
+                      <input type="text" value="09:30">
+                    </div>
+                    <button class="btn btn-ghost">Save</button>
+                  </div>
+                  <div class="field-hint">Syncs at 09:30, 21:30</div>
+                </section>
+                <section class="card">
+                  <h3 class="section-title">Actions</h3>
+                  <div class="actions-row">
+                    <button class="btn btn-ghost">Check for updates</button>
+                    <button class="btn btn-ghost">Download logs</button>
+                    <button class="btn btn-danger">Deactivate license (1/3)</button>
+                  </div>
+                  <a class="manage-link" href="#bank">&larr; Manage banks</a>
+                  <div class="update-status">Already up to date.</div>
+                </section>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      var screens = Array.from(document.querySelectorAll("[data-screen]"));
+      var links = Array.from(document.querySelectorAll("[data-screen-link]"));
+      var routeLabel = document.getElementById("route-label");
+
+      function routeName(name) {
+        if (name === "license") return "setup";
+        if (name === "actual") return "setup/actual";
+        if (name === "notifications") return "setup/notifications";
+        if (name === "bank") return "bank";
+        return "status";
+      }
+
+      function setScreen(screen) {
+        var name = screen || "status";
+        if (!screens.some(function (el) { return el.dataset.screen === name; })) {
+          name = "status";
+        }
+
+        screens.forEach(function (el) {
+          el.classList.toggle("active", el.dataset.screen === name);
+        });
+
+        links.forEach(function (el) {
+          el.classList.toggle("active", el.dataset.screenLink === name);
+        });
+
+        routeLabel.textContent = routeName(name);
+      }
+
+      function onRouteChange() {
+        setScreen((location.hash || "#status").slice(1));
+      }
+
+      window.addEventListener("hashchange", onRouteChange);
+      onRouteChange();
+    })();
+  </script>
+</body>
+</html>
