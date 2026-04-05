@@ -8,8 +8,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="{{ 'has-sidebar' if sidebar_enabled else '' }} page-{{ active or 'app' }}">
-{% if sidebar_enabled %}
+<body class="has-sidebar page-{{ active or 'app' }}">
   <main class="app-shell">
     <header class="chrome-bar">
       <div class="traffic-lights" aria-hidden="true">
@@ -68,39 +67,10 @@
           <div class="dashboard-surface">
             {% block steps %}{% endblock %}
             {% block content %}{% endblock %}
-            {% block nav %}{% endblock %}
           </div>
         </div>
       </section>
     </div>
   </main>
-{% else %}
-  <div class="wrap">
-    <a class="logo" href="/">
-      <div class="logo-mark">&#x27F7;</div>
-      <span class="logo-name">Bridge Bank</span>
-    </a>
-    {% block steps %}{% endblock %}
-    {% block content %}{% endblock %}
-    {% block nav %}
-    <nav class="footer-nav">
-      <a href="/setup" {% if active == 'license' %}class="active"{% endif %}>License</a>
-      <a href="/setup/actual" {% if active == 'actual' %}class="active"{% endif %}>Actual Budget</a>
-      <a href="/setup/notifications" {% if active == 'notifications' %}class="active"{% endif %}>Notifications</a>
-      <a href="/bank" {% if active == 'bank' %}class="active"{% endif %}>Bank</a>
-      <a href="/status" {% if active == 'status' %}class="active"{% endif %}>Status</a>
-    </nav>
-    {% endblock %}
-  </div>
-  <footer class="app-footer" style="justify-content:space-between;">
-    <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
-      <a href="mailto:support@david-alves.com">Support</a>
-      <a href="https://bridgebank.app/privacy" target="_blank">Privacy</a>
-      <a href="https://bridgebank.app/terms" target="_blank">Terms</a>
-      <a href="https://github.com/DAdjadj/bridge-bank" target="_blank">GitHub</a>
-    </div>
-    <span style="color:#333;font-size:12px;">v{{ app_version }}</span>
-  </footer>
-{% endif %}
 </body>
 </html>
