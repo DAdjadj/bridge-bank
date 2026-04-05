@@ -572,11 +572,8 @@ def bank():
     # Fetch bank account limit from licence API
     bank_account_limit = _get_bank_account_limit()
 
-    # Balance providers only shown when feature flag is enabled
-    balance_providers = []
-    if db.get_setting("enable_balance_providers") == "1":
-        from ..providers import get_all_providers
-        balance_providers = get_all_providers()
+    from ..providers import get_all_providers
+    balance_providers = get_all_providers()
 
     return render_template("bank.html",
         error=error,
