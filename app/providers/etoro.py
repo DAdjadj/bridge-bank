@@ -11,8 +11,8 @@ class EtoroProvider(BalanceProvider):
     display_name = "eToro"
     credential_fields = [
         {"key": "api_key", "label": "API Key", "type": "password",
-         "help": "Go to eToro Settings \u2192 API \u2192 Create API Key. Grant read-only portfolio access.",
-         "help_url": "https://www.etoro.com/settings/api"},
+         "help": "Your eToro account must be verified. Once verified, find your API key in your eToro account settings.",
+         "help_url": "https://api-portal.etoro.com/"},
     ]
 
     def validate_credentials(self, credentials: dict) -> bool:
