@@ -182,7 +182,8 @@ def _fix_rule_note_casing(session, transactions):
 def _sync_account(account, state):
     """Sync a single bank account. Returns (success, tx_count, message)."""
     account_id = str(account["id"])
-    bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')})"
+    actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
+    bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
     actual_account_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
 
     try:
@@ -381,7 +382,8 @@ def run():
     successes = []
 
     for account in all_accounts:
-        bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')})"
+        actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
+        bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
         try:
             success, added, msg = _sync_account(account, state)
             if success:
