@@ -170,7 +170,7 @@
           <td class="utc-time">{{ s.ran_at }}</td>
           <td><span class="badge {% if s.status == 'success' %}badge-success{% else %}badge-fail{% endif %}">{{ s.status }}</span></td>
           <td>{{ s.tx_count }}</td>
-          <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" onclick="this.style.whiteSpace=this.style.whiteSpace==='normal'?'nowrap':'normal'">{{ s.message or '—' }}</td>
+          <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" onclick="var a=this.querySelector('.expand-arrow');if(this.style.whiteSpace==='normal'){this.style.whiteSpace='nowrap';a.textContent='\u25B8'}else{this.style.whiteSpace='normal';a.textContent='\u25BE'}"><span class="expand-arrow" style="font-size:10px;margin-right:4px;color:#4a5568;">&blacktriangleright;</span>{{ s.message or '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>

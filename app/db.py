@@ -44,6 +44,16 @@ def _ensure_tables(conn):
         conn.execute("ALTER TABLE bank_accounts ADD COLUMN start_sync_date TEXT")
     except Exception:
         pass
+    # Add provider columns if missing (migration for balance-only providers)
+    for col, sql in [
+        ("provider", "ALTER TABLE bank_accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'enablebanking'"),
+        ("provider_credentials", "ALTER TABLE bank_accounts ADD COLUMN provider_credentials TEXT DEFAULT ''"),
+        ("sync_mode", "ALTER TABLE bank_accounts ADD COLUMN sync_mode TEXT NOT NULL DEFAULT 'transactions'"),
+    ]:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass
     conn.commit()
 
     # Migrate legacy flat settings into bank_accounts table
@@ -150,17 +160,17 @@ def get_bank_account_count() -> int:
         _ensure_tables(conn)
         return conn.execute("SELECT COUNT(*) FROM bank_accounts").fetchone()[0]
 
-def add_bank_account(session_id: str, account_uid: str, bank_name: str, bank_country: str, actual_account: str, session_expiry: str = "", start_sync_date: str = ""):
+def add_bank_account(session_id: str, account_uid: str, bank_name: str, bank_country: str, actual_account: str, session_expiry: str = "", start_sync_date: str = "", provider: str = "enablebanking", provider_credentials: str = "", sync_mode: str = "transactions"):
     with _conn() as conn:
         _ensure_tables(conn)
         conn.execute(
-            "INSERT INTO bank_accounts (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date)
+            "INSERT INTO bank_accounts (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date, provider, provider_credentials, sync_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date, provider, provider_credentials, sync_mode)
         )
         conn.commit()
 
 def update_bank_account_field(account_id: int, field: str, value: str):
-    allowed = {"start_sync_date", "session_id", "account_uid", "session_expiry", "actual_account", "bank_name", "bank_country"}
+    allowed = {"start_sync_date", "session_id", "account_uid", "session_expiry", "actual_account", "bank_name", "bank_country", "provider", "provider_credentials", "sync_mode"}
     if field not in allowed:
         raise ValueError(f"Field {field} is not updatable")
     with _conn() as conn:

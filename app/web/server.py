@@ -342,10 +342,12 @@ def health():
     else:
         checks["last_sync"] = None
 
-    # Bank session expiry check
+    # Bank session expiry check (skip balance-only providers)
     accounts = db.get_all_bank_accounts()
     expiring = []
     for acc in accounts:
+        if acc.get("sync_mode") == "balance":
+            continue
         if acc.get("session_expiry"):
             try:
                 exp_dt = datetime.fromisoformat(acc["session_expiry"]).replace(tzinfo=timezone.utc)
@@ -387,6 +389,12 @@ def detect_url():
 @app.route("/api/last-sync")
 def last_sync_api():
     return jsonify({"ran_at": db.get_last_sync() or ""})
+
+@app.route("/api/providers")
+def providers_api():
+    """List available balance-only providers and their credential fields."""
+    from ..providers import get_all_providers
+    return jsonify(get_all_providers())
 
 @app.route("/api/actual-accounts")
 def actual_accounts_api():
@@ -479,6 +487,72 @@ def bank():
                     except Exception as e:
                         error = f"Could not start bank connection: {e}"
 
+        elif action == "connect_provider":
+            provider_name  = request.form.get("provider_name", "").strip()
+            actual_account = request.form.get("actual_account", "").strip()
+            if not provider_name:
+                error = "Please select a provider."
+            elif not actual_account:
+                error = "Please enter the Actual Budget account name."
+            elif db.get_bank_account_count() >= _get_bank_account_limit():
+                error = "Bank account limit reached. Disconnect an account or add another slot before connecting a new one."
+            else:
+                # Collect credentials from form
+                from ..providers import get_provider, PROVIDERS
+                if provider_name not in PROVIDERS:
+                    error = f"Unknown provider: {provider_name}"
+                else:
+                    provider = get_provider(provider_name)
+                    credentials = {}
+                    for field in provider.credential_fields:
+                        val = request.form.get(f"cred_{field['key']}", "").strip()
+                        if not val:
+                            error = f"{field['label']} is required."
+                            break
+                        credentials[field["key"]] = val
+
+                if not error:
+                    # Validate credentials
+                    try:
+                        valid = provider.validate_credentials(credentials)
+                        if not valid:
+                            error = f"Could not connect to {provider.display_name}. Please check your credentials."
+                    except Exception as e:
+                        error = f"Could not validate {provider.display_name} credentials: {e}"
+
+                if not error:
+                    # Validate Actual Budget account exists
+                    try:
+                        from actual import Actual
+                        from actual.queries import get_accounts
+                        with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
+                                    encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
+                                    file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
+                            actual_names = [a.name for a in get_accounts(actual.session)]
+                        if actual_account not in actual_names:
+                            close_matches = [n for n in actual_names if actual_account.lower() in n.lower() or n.lower() in actual_account.lower()]
+                            hint = f" Did you mean: {', '.join(close_matches)}?" if close_matches else f" Available accounts: {', '.join(actual_names)}." if actual_names else ""
+                            error = f"Account \"{actual_account}\" not found in Actual Budget.{hint}"
+                    except Exception as e:
+                        logger.warning("Could not validate Actual account: %s", e)
+
+                if not error:
+                    from .. import crypto
+                    encrypted = crypto.encrypt_credentials(credentials)
+                    db.add_bank_account(
+                        session_id="",
+                        account_uid="",
+                        bank_name=provider.display_name,
+                        bank_country="",
+                        actual_account=actual_account,
+                        provider=provider_name,
+                        provider_credentials=encrypted,
+                        sync_mode="balance",
+                    )
+                    _start_scheduler_if_ready()
+                    threading.Thread(target=sync.run, daemon=True).start()
+                    return redirect(url_for("bank", success=1))
+
         elif action == "cancel":
             db.set_setting("pending_session_id", "")
             db.set_setting("pending_actual_account", "")
@@ -495,6 +569,7 @@ def bank():
     # Fetch bank account limit from licence API
     bank_account_limit = _get_bank_account_limit()
 
+    from ..providers import get_all_providers
     return render_template("bank.html",
         error=error,
         success=success,
@@ -507,6 +582,7 @@ def bank():
         bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="bank",
+        balance_providers=get_all_providers(),
     )
 
 # ---------------------------------------------------------------------------

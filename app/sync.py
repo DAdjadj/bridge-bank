@@ -179,8 +179,77 @@ def _fix_rule_note_casing(session, transactions):
                 txn.notes = original
                 break
 
+def _sync_balance_account(account):
+    """Sync a balance-only provider account. Returns (success, tx_count, label)."""
+    from .providers import get_provider
+    from . import crypto
+
+    provider_name = account["provider"]
+    actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
+    bank_label = f"{account.get('bank_name', provider_name)} \u2192 {actual_name}"
+
+    try:
+        provider = get_provider(provider_name)
+    except ValueError as e:
+        return False, 0, str(e)
+
+    try:
+        credentials = crypto.decrypt_credentials(account.get("provider_credentials", ""))
+    except Exception as e:
+        msg = f"{bank_label}: Could not decrypt credentials: {e}"
+        log.error(msg)
+        return False, 0, msg
+
+    try:
+        target_balance = provider.get_balance(credentials)
+    except Exception as e:
+        msg = f"{bank_label}: Could not fetch balance from {provider.display_name}: {e}"
+        log.error(msg)
+        return False, 0, msg
+
+    try:
+        from actual import Actual
+        from actual.queries import get_or_create_account, create_transaction
+
+        with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
+                    encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
+                    file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
+            account_obj = get_or_create_account(actual.session, actual_name)
+            current_balance = account_obj.balance or 0
+            # actualpy stores amounts in cents (minor units)
+            target_cents = int(target_balance * 100)
+            adjustment = target_cents - current_balance
+
+            tx_count = 0
+            if adjustment != 0:
+                create_transaction(
+                    actual.session,
+                    datetime.date.today(),
+                    account_obj,
+                    f"{provider.display_name}",
+                    f"{provider.display_name} portfolio value",
+                    adjustment,
+                    cleared=True,
+                )
+                tx_count = 1
+
+            actual.commit()
+            log.info("Balance sync %s: target=%s current=%s adjustment=%s",
+                     bank_label, target_cents, current_balance, adjustment)
+
+    except Exception as e:
+        msg = f"{bank_label}: Could not connect to Actual Budget: {e}"
+        log.error(msg)
+        return False, 0, msg
+
+    return True, tx_count, "OK"
+
+
 def _sync_account(account, state):
     """Sync a single bank account. Returns (success, tx_count, message)."""
+    if account.get("sync_mode") == "balance":
+        return _sync_balance_account(account)
+
     account_id = str(account["id"])
     actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
     bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
@@ -383,7 +452,10 @@ def run():
 
     for account in all_accounts:
         actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
-        bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
+        if account.get("sync_mode") == "balance":
+            bank_label = f"{account.get('bank_name', account.get('provider', 'Unknown'))} \u2192 {actual_name}"
+        else:
+            bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
         try:
             success, added, msg = _sync_account(account, state)
             if success:
