@@ -23,8 +23,7 @@ body.has-sidebar { padding: 0; }
     z-index: 50;
   }
   body.has-sidebar .sidebar .logo { margin-bottom: 2rem; }
-  body.has-sidebar .main-content { margin-left: 200px; flex: 1; padding: 3rem 2rem 4rem; }
-  body.has-sidebar .main-content .wrap { margin: 0; max-width: 540px; }
+  body.has-sidebar .main-content { margin-left: 200px; flex: 1; padding: 3rem 1.5rem 4rem; }
   body.has-sidebar .footer-nav { display: none !important; }
 }
 
