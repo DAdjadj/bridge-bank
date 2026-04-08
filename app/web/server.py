@@ -615,6 +615,9 @@ def reauthorise():
     all_accounts = db.get_all_bank_accounts()
     bank_account_limit = _get_bank_account_limit()
 
+    from ..providers import get_all_providers
+    balance_providers = get_all_providers()
+
     return render_template("bank.html",
         error=None,
         success=None,
@@ -626,6 +629,7 @@ def reauthorise():
         bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="bank",
+        balance_providers=balance_providers,
     )
 
 # ---------------------------------------------------------------------------
