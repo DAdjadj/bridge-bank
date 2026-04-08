@@ -15,12 +15,11 @@
   <div class="card-sub">Your bank returned multiple accounts. Select which one to connect.</div>
   <form method="POST">
     {% for acct in accounts %}
-    {% set iban = acct.iban or (acct.account_id.IBAN if acct.account_id is mapping and acct.account_id.IBAN) %}
     <label style="display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid #253450; border-radius:8px; margin-bottom:0.5rem; cursor:pointer; transition: border-color 0.15s;">
       <input type="radio" name="account_uid" value="{{ acct.uid or acct.account_uid or acct.resource_id }}" {% if loop.first %}checked{% endif %} style="accent-color:#3b82f6;">
       <div>
         <div style="font-size:14px; font-weight:600; color:#e8edf5;">
-          {% if iban %}{{ iban[:4] }} •••• {{ iban[-4:] }}{% else %}{{ acct.uid or 'Account ' ~ loop.index }}{% endif %}
+          {% if acct.iban %}{{ acct.iban[:4] }} •••• {{ acct.iban[-4:] }}{% elif acct.account_name %}{{ acct.account_name }}{% else %}Account {{ loop.index }}{% endif %}
         </div>
         {% if acct.owner_name %}<div style="font-size:12px; color:#94a3b8;">{{ acct.owner_name }}</div>{% endif %}
         {% if acct.currency %}<div style="font-size:11px; color:#4a5568;">{{ acct.currency }}</div>{% endif %}

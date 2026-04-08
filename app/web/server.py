@@ -709,6 +709,21 @@ def pick_account():
     if not accounts_json:
         return redirect(url_for("bank"))
     accounts = json.loads(accounts_json)
+    logger.info("Account picker data: %s", accounts_json)
+    # Extract IBAN from various Enable Banking response formats
+    for acct in accounts:
+        if not acct.get("iban"):
+            aid = acct.get("account_id")
+            if isinstance(aid, dict):
+                acct["iban"] = aid.get("iban") or aid.get("IBAN")
+            if not acct.get("iban"):
+                # Check all_account_ids for an IBAN-scheme entry
+                for alt in acct.get("all_account_ids", []):
+                    if isinstance(alt, dict) and alt.get("identification"):
+                        scheme = (alt.get("scheme_name") or "").upper()
+                        if scheme == "IBAN" or (not acct.get("iban") and len(alt["identification"]) >= 15 and alt["identification"][:2].isalpha()):
+                            acct["iban"] = alt["identification"]
+                            break
     return render_template("pick_account.html", accounts=accounts, active="bank")
 
 @app.route("/pick-account", methods=["POST"])
