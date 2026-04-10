@@ -58,5 +58,8 @@
       </div>
     </section>
   </main>
+<script>
+(function(){var tz=Intl.DateTimeFormat().resolvedOptions().timeZone;if(tz)fetch('/api/timezone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tz:tz})});})();
+</script>
 </body>
 </html>

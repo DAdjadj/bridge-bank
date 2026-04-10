@@ -166,7 +166,7 @@
           </div>
           <button class="btn btn-ghost" type="submit" style="font-size:12px;">Save</button>
         </div>
-        <div style="font-size:12px;color:#94a3b8;margin-top:8px;" id="sync-times-preview">{% if sync_frequency != "0" %}Syncs at {{ sync_times }}{% endif %}</div>
+        <div style="font-size:12px;color:#94a3b8;margin-top:8px;" id="sync-times-preview">{% if sync_frequency != "0" %}Syncs at {{ sync_times }}{% if timezone %} ({{ timezone }}){% endif %}{% endif %}</div>
       </form>
       <script>
   function updateSyncPreview() {

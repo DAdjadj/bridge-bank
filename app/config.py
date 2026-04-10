@@ -26,6 +26,7 @@ SMTP_PORT            = "587"
 SMTP_FROM            = ""
 NOTIFY_ON            = "all"
 BRIDGE_BANK_URL      = ""
+TIMEZONE             = ""
 
 def _load():
     """Load config from file, then override with environment variables."""

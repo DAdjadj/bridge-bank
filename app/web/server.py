@@ -379,6 +379,19 @@ def api_version():
 # API endpoints
 # ---------------------------------------------------------------------------
 
+@app.route("/api/timezone", methods=["POST"])
+def api_timezone():
+    from zoneinfo import available_timezones
+    data = request.get_json(silent=True) or {}
+    tz = data.get("tz", "")
+    if not tz or tz not in available_timezones():
+        return jsonify({"ok": False}), 400
+    if tz != config.TIMEZONE:
+        config.set("TIMEZONE", tz)
+        from .. import scheduler
+        scheduler.start()
+    return jsonify({"ok": True})
+
 @app.route("/api/bank-status")
 def bank_status():
     return jsonify({"connected": db.get_bank_account_count() > 0})
@@ -830,6 +843,7 @@ def status():
         sync_time=config.SYNC_TIME,
         sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or '24',
         sync_times=_get_sync_times(),
+        timezone=config.TIMEZONE or "",
         notify_email=config.NOTIFY_EMAIL,
         activation_usage=act_info["usage"],
         activation_limit=act_info["limit"],

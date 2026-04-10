@@ -10,8 +10,6 @@ services:
       - ./app/web/server.py:/app/web/server.py:ro
     ports:
       - "3002:3000"
-    environment:
-      - TZ=Europe/Lisbon
     extra_hosts:
       - "plex-server:host-gateway"
     networks:
