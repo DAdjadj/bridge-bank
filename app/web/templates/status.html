@@ -23,6 +23,10 @@
   {% endif %}
 {% endif %}
 
+{% if bank_seat_error %}
+  <div class="alert alert-error">{{ bank_seat_error }} <a href="/bank" style="color:inherit;font-weight:600;">Manage banks &rarr;</a></div>
+{% endif %}
+
 {% if days_left is not none and days_left <= 14 %}
   <div class="alert alert-warn">A bank connection expires in {{ days_left }} day{{ 's' if days_left != 1 else '' }}. <a href="/bank" style="color:inherit;font-weight:600;">Manage banks &rarr;</a></div>
 {% endif %}
@@ -97,6 +101,7 @@
         <span class="stat-value utc-time">{{ last_sync or 'Never' }}</span>
       </div>
       <div class="stat-row"><span class="stat-label">Notifications</span><span class="stat-value">{{ notify_email or 'Disabled' }}</span></div>
+      <div class="stat-row"><span class="stat-label">Bank slots</span><span class="stat-value">{{ bank_seat_usage }}/{{ bank_account_limit }}</span></div>
       {% if total_tx >= 0 %}
       <div class="stat-row"><span class="stat-label">Transactions synced</span><span class="stat-value">{{ total_tx }}</span></div>
       {% endif %}

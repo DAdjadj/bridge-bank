@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import uuid
 
 DB_PATH = "/data/instance.db"
 
@@ -36,6 +37,7 @@ def _ensure_tables(conn):
             actual_account TEXT NOT NULL,
             session_expiry TEXT,
             start_sync_date TEXT,
+            license_seat_id TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         )
     """)
@@ -49,6 +51,7 @@ def _ensure_tables(conn):
         ("provider", "ALTER TABLE bank_accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'enablebanking'"),
         ("provider_credentials", "ALTER TABLE bank_accounts ADD COLUMN provider_credentials TEXT DEFAULT ''"),
         ("sync_mode", "ALTER TABLE bank_accounts ADD COLUMN sync_mode TEXT NOT NULL DEFAULT 'transactions'"),
+        ("license_seat_id", "ALTER TABLE bank_accounts ADD COLUMN license_seat_id TEXT"),
     ]:
         try:
             conn.execute(sql)
@@ -78,10 +81,23 @@ def _ensure_tables(conn):
                 actual_account = "Revolut"
             if uid:
                 conn.execute(
-                    "INSERT INTO bank_accounts (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry) VALUES (?, ?, ?, ?, ?, ?)",
-                    (sid, uid, bank_name, bank_country, actual_account, exp)
+                    "INSERT INTO bank_accounts (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, license_seat_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (sid, uid, bank_name, bank_country, actual_account, exp, str(uuid.uuid4()))
                 )
                 conn.commit()
+
+def _ensure_bank_account_seat_ids(conn):
+    rows = conn.execute(
+        "SELECT id FROM bank_accounts WHERE license_seat_id IS NULL OR license_seat_id = ''"
+    ).fetchall()
+    if not rows:
+        return
+    for row in rows:
+        conn.execute(
+            "UPDATE bank_accounts SET license_seat_id = ? WHERE id = ?",
+            (str(uuid.uuid4()), row["id"])
+        )
+    conn.commit()
 
 def get_setting(key: str) -> str:
     with _conn() as conn:
@@ -150,6 +166,7 @@ def get_last_sync() -> str:
 def get_all_bank_accounts() -> list:
     with _conn() as conn:
         _ensure_tables(conn)
+        _ensure_bank_account_seat_ids(conn)
         rows = conn.execute(
             "SELECT * FROM bank_accounts ORDER BY created_at ASC"
         ).fetchall()
@@ -160,17 +177,28 @@ def get_bank_account_count() -> int:
         _ensure_tables(conn)
         return conn.execute("SELECT COUNT(*) FROM bank_accounts").fetchone()[0]
 
-def add_bank_account(session_id: str, account_uid: str, bank_name: str, bank_country: str, actual_account: str, session_expiry: str = "", start_sync_date: str = "", provider: str = "enablebanking", provider_credentials: str = "", sync_mode: str = "transactions"):
+def add_bank_account(session_id: str, account_uid: str, bank_name: str, bank_country: str, actual_account: str, session_expiry: str = "", start_sync_date: str = "", provider: str = "enablebanking", provider_credentials: str = "", sync_mode: str = "transactions", license_seat_id: str = ""):
     with _conn() as conn:
         _ensure_tables(conn)
-        conn.execute(
-            "INSERT INTO bank_accounts (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date, provider, provider_credentials, sync_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date, provider, provider_credentials, sync_mode)
+        cur = conn.execute(
+            "INSERT INTO bank_accounts (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date, provider, provider_credentials, sync_mode, license_seat_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, account_uid, bank_name, bank_country, actual_account, session_expiry, start_sync_date, provider, provider_credentials, sync_mode, license_seat_id or str(uuid.uuid4()))
         )
         conn.commit()
+        return cur.lastrowid
+
+def get_bank_account(account_id: int):
+    with _conn() as conn:
+        _ensure_tables(conn)
+        _ensure_bank_account_seat_ids(conn)
+        row = conn.execute(
+            "SELECT * FROM bank_accounts WHERE id = ?",
+            (account_id,)
+        ).fetchone()
+        return dict(row) if row else None
 
 def update_bank_account_field(account_id: int, field: str, value: str):
-    allowed = {"start_sync_date", "session_id", "account_uid", "session_expiry", "actual_account", "bank_name", "bank_country", "provider", "provider_credentials", "sync_mode"}
+    allowed = {"start_sync_date", "session_id", "account_uid", "session_expiry", "actual_account", "bank_name", "bank_country", "provider", "provider_credentials", "sync_mode", "license_seat_id"}
     if field not in allowed:
         raise ValueError(f"Field {field} is not updatable")
     with _conn() as conn:
