@@ -52,6 +52,45 @@ def _get_bank_account_limit() -> int:
     except Exception:
         return 2
 
+def _sync_bank_seats(accounts):
+    if not config.LICENCE_KEY:
+        db.set_setting("license_bank_limit_error", "")
+        return {"ok": True, "used": 0, "limit": _get_bank_account_limit()}
+    result = licence.sync_bank_seats(accounts)
+    if result.get("ok"):
+        db.set_setting("license_bank_limit_error", "")
+    elif not result.get("network"):
+        db.set_setting("license_bank_limit_error", result.get("error", ""))
+    return result
+
+def _get_bank_seat_error(accounts=None):
+    accounts = accounts if accounts is not None else db.get_all_bank_accounts()
+    result = _sync_bank_seats(accounts)
+    if result.get("ok") or result.get("network"):
+        return None, result
+    return result.get("error"), result
+
+def _ensure_global_bank_capacity(current_accounts, new_seats=1):
+    result = _sync_bank_seats(current_accounts)
+    if not result.get("ok"):
+        if result.get("network"):
+            return "Could not confirm your global bank slot availability right now. Please try again in a moment."
+        return result.get("error") or "Bank account limit reached for this licence."
+    used = int(result.get("used") or 0)
+    limit = int(result.get("limit") or _get_bank_account_limit())
+    if used + new_seats > limit:
+        return f"Bank account limit reached ({limit}). Disconnect a bank on another machine or add another bank slot before connecting a new one."
+    return None
+
+def _claim_bank_seat(account):
+    result = licence.claim_bank_seat(account)
+    if result.get("ok"):
+        db.set_setting("license_bank_limit_error", "")
+        return None
+    if result.get("network"):
+        return "Could not confirm your global bank slot availability right now. Please try again in a moment."
+    return result.get("error") or "Bank account limit reached for this licence."
+
 COUNTRIES = [
     ("AT","Austria"),("BE","Belgium"),("HR","Croatia"),("CY","Cyprus"),
     ("CZ","Czech Republic"),("DK","Denmark"),("EE","Estonia"),("FI","Finland"),
@@ -466,9 +505,10 @@ def bank():
                 error = "Please select a bank."
             elif not actual_account:
                 error = "Please enter the Actual Budget account name."
-            elif db.get_bank_account_count() >= _get_bank_account_limit():
-                error = "Bank account limit reached. Disconnect a bank or add another slot before connecting a new one."
             else:
+                current_accounts = db.get_all_bank_accounts()
+                error = _ensure_global_bank_capacity(current_accounts, new_seats=1)
+            if not error:
                 # Validate that the account exists in Actual Budget
                 try:
                     from actual import Actual
@@ -510,9 +550,10 @@ def bank():
                 error = "Please select a provider."
             elif not actual_account:
                 error = "Please enter the Actual Budget account name."
-            elif db.get_bank_account_count() >= _get_bank_account_limit():
-                error = "Bank account limit reached. Disconnect an account or add another slot before connecting a new one."
             else:
+                current_accounts = db.get_all_bank_accounts()
+                error = _ensure_global_bank_capacity(current_accounts, new_seats=1)
+            if not error:
                 # Collect credentials from form
                 from ..providers import get_provider, PROVIDERS
                 if provider_name not in PROVIDERS:
@@ -555,7 +596,7 @@ def bank():
                 if not error:
                     from .. import crypto
                     encrypted = crypto.encrypt_credentials(credentials)
-                    db.add_bank_account(
+                    account_id = db.add_bank_account(
                         session_id="",
                         account_uid="",
                         bank_name=provider.display_name,
@@ -565,9 +606,15 @@ def bank():
                         provider_credentials=encrypted,
                         sync_mode="balance",
                     )
-                    _start_scheduler_if_ready()
-                    threading.Thread(target=sync.run, daemon=True).start()
-                    return redirect(url_for("bank", success=1))
+                    account = db.get_bank_account(account_id)
+                    seat_error = _claim_bank_seat(account)
+                    if seat_error:
+                        db.remove_bank_account(account_id)
+                        error = seat_error
+                    else:
+                        _start_scheduler_if_ready()
+                        threading.Thread(target=sync.run, daemon=True).start()
+                        return redirect(url_for("bank", success=1))
 
         elif action == "cancel":
             db.set_setting("pending_session_id", "")
@@ -578,12 +625,14 @@ def bank():
             return redirect(url_for("bank"))
 
     all_accounts = db.get_all_bank_accounts()
+    bank_seat_error, bank_seat_result = _get_bank_seat_error(all_accounts)
     days_left    = _get_days_left()
     success      = request.args.get("success")
     pem_ready    = bool(db.get_setting("eb_pem_content") or __import__('os').path.exists("/data/private.pem"))
 
     # Fetch bank account limit from licence API
-    bank_account_limit = _get_bank_account_limit()
+    bank_account_limit = int((bank_seat_result or {}).get("limit") or _get_bank_account_limit())
+    bank_seat_usage = int((bank_seat_result or {}).get("used") or len(all_accounts))
 
     from ..providers import get_all_providers
     balance_providers = get_all_providers()
@@ -591,12 +640,14 @@ def bank():
     return render_template("bank.html",
         error=error,
         success=success,
+        bank_seat_error=bank_seat_error,
         auth_url=auth_url,
         all_accounts=all_accounts,
         days_left=days_left,
         pem_ready=pem_ready,
         eb_app_id=config.EB_APPLICATION_ID or db.get_setting("eb_app_id"),
         bank_account_limit=bank_account_limit,
+        bank_seat_usage=bank_seat_usage,
         bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="bank",
@@ -626,7 +677,9 @@ def reauthorise():
         return redirect(url_for("bank") + f"?error=Could not start re-authorisation: {e}")
 
     all_accounts = db.get_all_bank_accounts()
-    bank_account_limit = _get_bank_account_limit()
+    bank_seat_error, bank_seat_result = _get_bank_seat_error(all_accounts)
+    bank_account_limit = int((bank_seat_result or {}).get("limit") or _get_bank_account_limit())
+    bank_seat_usage = int((bank_seat_result or {}).get("used") or len(all_accounts))
 
     from ..providers import get_all_providers
     balance_providers = get_all_providers()
@@ -635,10 +688,12 @@ def reauthorise():
         error=None,
         success=None,
         auth_url=auth_url,
+        bank_seat_error=bank_seat_error,
         all_accounts=all_accounts,
         pem_ready=True,
         eb_app_id=config.EB_APPLICATION_ID or db.get_setting("eb_app_id"),
         bank_account_limit=bank_account_limit,
+        bank_seat_usage=bank_seat_usage,
         bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="bank",
@@ -655,6 +710,7 @@ def _save_bank_account(session_id, account_uid, valid_until):
     bank_name       = db.get_setting("pending_bank_name") or config.EB_BANK_NAME
     bank_country    = db.get_setting("pending_bank_country") or config.EB_BANK_COUNTRY
     start_sync_date = db.get_setting("pending_start_sync_date") or ""
+    account_id = None
     if reauth_account_id:
         account_id = int(reauth_account_id)
         db.update_bank_account_field(account_id, "session_id", session_id)
@@ -663,9 +719,10 @@ def _save_bank_account(session_id, account_uid, valid_until):
         db.update_bank_account_field(account_id, "bank_name", bank_name)
         db.update_bank_account_field(account_id, "bank_country", bank_country)
     else:
-        if db.get_bank_account_count() >= _get_bank_account_limit():
-            raise ValueError("Bank account limit reached. Disconnect a bank or add another slot before connecting a new one.")
-        db.add_bank_account(
+        capacity_error = _ensure_global_bank_capacity(db.get_all_bank_accounts(), new_seats=1)
+        if capacity_error:
+            raise ValueError(capacity_error)
+        account_id = db.add_bank_account(
             session_id=session_id,
             account_uid=account_uid,
             bank_name=bank_name,
@@ -674,6 +731,12 @@ def _save_bank_account(session_id, account_uid, valid_until):
             session_expiry=valid_until,
             start_sync_date=start_sync_date,
         )
+    account = db.get_bank_account(account_id)
+    seat_error = _claim_bank_seat(account)
+    if seat_error:
+        if not reauth_account_id and account_id:
+            db.remove_bank_account(account_id)
+        raise ValueError(seat_error)
     # Clear pending settings
     for key in ["pending_actual_account", "pending_bank_name", "pending_bank_country",
                 "pending_start_sync_date", "pending_session_state", "pending_session_valid_until",
@@ -769,6 +832,7 @@ def status():
     log_data     = db.get_sync_log_page(page=page, per_page=5)
     syncs        = log_data["syncs"]
     all_accounts = db.get_all_bank_accounts()
+    bank_seat_error, bank_seat_result = _get_bank_seat_error(all_accounts)
     days_left    = _get_days_left()
     last_sync    = db.get_last_sync()
     act_info     = licence.get_activation_info()
@@ -851,6 +915,9 @@ def status():
         trial_expires_at=act_info.get("expires_at", "")[:10] if act_info.get("expires_at") else None,
         license_sync_failed=license_sync_failed,
         license_limit_reached=(license_sync_failed and act_info["usage"] >= act_info["limit"] and act_info["limit"] > 0),
+        bank_seat_error=bank_seat_error,
+        bank_seat_usage=(bank_seat_result or {}).get("used", act_info.get("bank_seat_usage", 0)),
+        bank_account_limit=(bank_seat_result or {}).get("limit", act_info.get("bank_account_limit", 2)),
         page=log_data["page"],
         total_pages=log_data["total_pages"],
         active="status",
@@ -953,7 +1020,11 @@ def reset_pem():
 def disconnect():
     account_id = request.form.get("account_id")
     if account_id:
+        account = db.get_bank_account(int(account_id))
         db.remove_bank_account(int(account_id))
+        result = _sync_bank_seats(db.get_all_bank_accounts())
+        if not result.get("ok") and not result.get("network") and account:
+            logger.warning("Failed to release bank seat for %s: %s", account.get("bank_name"), result.get("error"))
     return redirect(url_for("bank"))
 
 @app.route("/reset-sync", methods=["POST"])

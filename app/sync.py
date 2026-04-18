@@ -450,6 +450,20 @@ def run():
         db.log_sync("failure", message=msg)
         return False, 0, msg
 
+    seat_result = licence.sync_bank_seats(all_accounts)
+    if not seat_result.get("ok"):
+        if seat_result.get("network"):
+            log.warning("Bank seat verification skipped: %s", seat_result.get("error"))
+        else:
+            msg = seat_result.get("error") or "Bank account limit reached for this licence."
+            log.error(msg)
+            db.set_setting("license_bank_limit_error", msg)
+            db.log_sync("failure", message=msg)
+            email_notify.send_failure(msg)
+            return False, 0, msg
+    else:
+        db.set_setting("license_bank_limit_error", "")
+
     state = _load_state()
     total_added = 0
     errors = []

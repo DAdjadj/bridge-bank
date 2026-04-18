@@ -14,6 +14,9 @@
 {% if error %}
   <div class="alert alert-error">{{ error }}</div>
 {% endif %}
+{% if bank_seat_error %}
+  <div class="alert alert-error">{{ bank_seat_error }}</div>
+{% endif %}
 {% if success %}
   <div class="alert alert-success">Bank connected. Your first sync will run shortly.</div>
 {% endif %}
@@ -54,7 +57,7 @@
     </div>
 
     {% if all_accounts %}
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;margin-bottom:0.5rem;">Connected accounts ({{ all_accounts|length }}/{{ bank_account_limit }})</div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;margin-bottom:0.5rem;">Connected accounts ({{ bank_seat_usage }}/{{ bank_account_limit }} across all machines)</div>
     <div style="font-size:11px;color:#4a5568;margin-bottom:0.75rem;">Reset sync re-imports transactions from the start date. Existing transactions won't be duplicated.</div>
     {% for a in all_accounts %}
     <div style="margin-bottom:0.75rem;padding:12px 14px;border:1px solid #253450;border-radius:8px;">
@@ -103,9 +106,9 @@
     <hr style="border:none;border-top:1px solid #253450;margin:1.25rem 0;">
     {% endif %}
 
-    {% if all_accounts|length >= bank_account_limit %}
+    {% if bank_seat_usage >= bank_account_limit %}
     <div style="padding:14px;background:#080b12;border:1px solid #253450;border-radius:8px;font-size:13px;color:#94a3b8;text-align:center;">
-      Account limit reached. <a href="{{ bank_slot_url }}" target="_blank" style="color:#e8edf5;font-weight:600;">Add 1 more &rarr;</a>
+      Account limit reached ({{ bank_seat_usage }}/{{ bank_account_limit }} across all machines). <a href="{{ bank_slot_url }}" target="_blank" style="color:#e8edf5;font-weight:600;">Add 1 more &rarr;</a>
     </div>
     {% else %}
     {% if balance_providers %}
