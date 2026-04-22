@@ -102,14 +102,14 @@
       </div>
       {% endif %}
       {% if a.sync_mode != 'balance' %}
-      <div style="margin-top:8px;font-size:11px;color:#4a5568;">
+      <div style="margin-top:8px;">
         <form method="POST" action="/toggle-skip-pending" style="display:inline;" id="skip-pending-form-{{ a.id }}">
           <input type="hidden" name="account_id" value="{{ a.id }}">
           <input type="hidden" name="skip_pending" value="{{ '0' if a.skip_pending else '1' }}">
-          <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
-            <input type="checkbox" {% if a.skip_pending %}checked{% endif %} onchange="document.getElementById('skip-pending-form-{{ a.id }}').submit();" style="cursor:pointer;margin:0;">
+          <span style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:#94a3b8;" onclick="this.querySelector('input[type=checkbox]').click();">
+            <input type="checkbox" {% if a.skip_pending %}checked{% endif %} onchange="document.getElementById('skip-pending-form-{{ a.id }}').submit();" onclick="event.stopPropagation();" style="width:14px;height:14px;margin:0;padding:0;appearance:auto;-webkit-appearance:auto;background:transparent;border:none;cursor:pointer;flex-shrink:0;">
             <span>Only sync booked transactions (skip pending)</span>
-          </label>
+          </span>
         </form>
       </div>
       {% endif %}
