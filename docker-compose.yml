@@ -12,8 +12,6 @@ services:
       - "3002:3000"
     extra_hosts:
       - "plex-server:host-gateway"
-    networks:
-      - media
 
   watchtower:
     image: nickfedor/watchtower
@@ -28,7 +26,3 @@ services:
     environment:
       - WATCHTOWER_LOG_LEVEL=warn
       - WATCHTOWER_HTTP_API_TOKEN=bridge-bank-update
-
-networks:
-  media:
-    external: true
