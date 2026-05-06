@@ -206,9 +206,6 @@ def claim_bank_seat(account, key=None):
         "license_key": key,
         "machine_fingerprint": fp,
         "seat_id": seat_id,
-        "bank_name": account.get("bank_name", ""),
-        "actual_account": account.get("actual_account", ""),
-        "sync_mode": account.get("sync_mode", "transactions"),
     }
     try:
         resp, data = _post_json("/bank-seats/claim", payload)
@@ -242,12 +239,7 @@ def sync_bank_seats(accounts, key=None):
         "license_key": key,
         "machine_fingerprint": fp,
         "seats": [
-            {
-                "seat_id": account.get("license_seat_id", ""),
-                "bank_name": account.get("bank_name", ""),
-                "actual_account": account.get("actual_account", ""),
-                "sync_mode": account.get("sync_mode", "transactions"),
-            }
+            {"seat_id": account.get("license_seat_id", "")}
             for account in accounts
             if account.get("license_seat_id")
         ],
