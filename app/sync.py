@@ -166,7 +166,10 @@ def _fix_rule_note_casing(session, transactions):
 
     actualpy lowercases all string values via get_normalized_string(), including
     SET action values for notes. This compares each transaction's notes against
-    the lowercased rule value and restores the original case if they match."""
+    the lowercased rule value and restores the original case if they match.
+
+    Both sides are normalised to NFC before comparison so the check works
+    regardless of whether actualpy applies NFD normalisation internally."""
     import json, unicodedata
     from actual.queries import get_rules
     note_rules = []
@@ -178,15 +181,16 @@ def _fix_rule_note_casing(session, transactions):
         for action in actions:
             if action.get("field") == "notes" and action.get("op") == "set" and action.get("value"):
                 original = action["value"]
-                lowered = unicodedata.normalize("NFD", original.lower())
+                lowered = unicodedata.normalize("NFC", original).lower()
                 note_rules.append((lowered, original))
     if not note_rules:
         return
     for txn in transactions:
         if not txn.notes:
             continue
+        txn_notes_nfc = unicodedata.normalize("NFC", txn.notes).lower()
         for lowered, original in note_rules:
-            if txn.notes == lowered:
+            if txn_notes_nfc == lowered:
                 txn.notes = original
                 break
 
