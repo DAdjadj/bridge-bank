@@ -231,16 +231,31 @@ def setup_notifications():
         smtp_password = request.form.get("smtp_password", "").strip()
         smtp_from     = request.form.get("smtp_from", "").strip()
         smtp_host     = request.form.get("smtp_host", "").strip()
+        smtp_port     = request.form.get("smtp_port", "587").strip() or "587"
+        smtp_security = request.form.get("smtp_security", "starttls").strip() or "starttls"
+        smtp_tls_verify = "true" if request.form.get("smtp_tls_verify") == "on" else "false"
+        smtp_auth     = request.form.get("smtp_auth", "true").strip() or "true"
         notify_on     = request.form.get("notify_on", "all").strip()
         holder_name   = request.form.get("holder_name", "").strip()
-        if notify_on != "never" and (not notify_email or not smtp_user or not smtp_password):
-            error = "Notification email and sending credentials are required."
+        sender = smtp_from or smtp_user
+        if notify_on != "never" and not notify_email:
+            error = "Notification email is required."
+        elif notify_on != "never" and smtp_auth != "false" and (not smtp_user or not smtp_password):
+            error = "SMTP username and password are required when authentication is enabled."
+        elif notify_on != "never" and not sender:
+            error = "A sender address is required."
+        elif notify_on != "never" and not smtp_host and not smtp_user:
+            error = "SMTP host is required when no sending account is configured."
         else:
             config.set("NOTIFY_EMAIL", notify_email)
             config.set("SMTP_USER", smtp_user)
             config.set("SMTP_PASSWORD", smtp_password)
             config.set("SMTP_FROM", smtp_from)
             config.set("SMTP_HOST", smtp_host)
+            config.set("SMTP_PORT", smtp_port)
+            config.set("SMTP_SECURITY", smtp_security)
+            config.set("SMTP_TLS_VERIFY", smtp_tls_verify)
+            config.set("SMTP_AUTH", smtp_auth)
             config.set("NOTIFY_ON", notify_on)
             config.set("ACCOUNT_HOLDER_NAME", holder_name)
             scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
@@ -254,6 +269,10 @@ def setup_notifications():
         smtp_password=config.SMTP_PASSWORD,
         smtp_from=config.SMTP_FROM,
         smtp_host=config.SMTP_HOST,
+        smtp_port=config.SMTP_PORT,
+        smtp_security=config.SMTP_SECURITY,
+        smtp_tls_verify=config.SMTP_TLS_VERIFY,
+        smtp_auth=config.SMTP_AUTH,
         notify_on=config.NOTIFY_ON,
         holder_name=config.ACCOUNT_HOLDER_NAME,
         active="notifications",
@@ -273,6 +292,14 @@ def test_email():
         config.set("SMTP_FROM", (data.get("smtp_from") or "").strip())
     if "smtp_host" in data:
         config.set("SMTP_HOST", (data.get("smtp_host") or "").strip())
+    if "smtp_port" in data:
+        config.set("SMTP_PORT", (data.get("smtp_port") or "587").strip())
+    if "smtp_security" in data:
+        config.set("SMTP_SECURITY", (data.get("smtp_security") or "starttls").strip())
+    if "smtp_tls_verify" in data:
+        config.set("SMTP_TLS_VERIFY", (data.get("smtp_tls_verify") or "true").strip())
+    if "smtp_auth" in data:
+        config.set("SMTP_AUTH", (data.get("smtp_auth") or "true").strip())
     try:
         from .. import email_notify
         email_notify.send("Bridge Bank: test email", "This is a test email from Bridge Bank. If you're reading this, your email notifications are working correctly.", raise_on_error=True)

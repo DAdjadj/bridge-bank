@@ -72,6 +72,22 @@ docker compose up -d
 
 Open **http://your-server-address:3002** in your browser. The setup wizard will guide you through the rest.
 
+### Local SMTP relays
+
+Bridge Bank defaults to STARTTLS on port 587 for common hosted providers. For a trusted local relay on port 25, set these environment variables on the `bridge-bank` service:
+
+```yaml
+environment:
+  - NOTIFY_EMAIL=you@example.com
+  - SMTP_HOST=mail-relay
+  - SMTP_PORT=25
+  - SMTP_SECURITY=none
+  - SMTP_AUTH=false
+  - SMTP_FROM=bridge-bank@home.lan
+```
+
+`SMTP_SECURITY` accepts `starttls`, `ssl`, or `none`. For a relay that uses STARTTLS with a self-signed certificate, keep `SMTP_SECURITY=starttls` and set `SMTP_TLS_VERIFY=false`.
+
 ---
 
 ## Setup wizard

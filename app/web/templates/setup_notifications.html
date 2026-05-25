@@ -35,14 +35,31 @@
     </div>
     <div class="field-hint">For iCloud: use an app-specific password from <a href="https://appleid.apple.com" target="_blank">appleid.apple.com</a>. For Gmail: use an app password from your Google account security settings.</div>
     <div style="margin-top:1rem;">
-      <button type="button" onclick="document.getElementById('smtp-advanced').hidden=!document.getElementById('smtp-advanced').hidden" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;padding:0;font-family:'Inter',sans-serif;">{% if smtp_from or smtp_host %}▾{% else %}▸{% endif %} Advanced SMTP settings</button>
-      <div id="smtp-advanced" {% if not smtp_from and not smtp_host %}hidden{% endif %}>
+      <button type="button" onclick="document.getElementById('smtp-advanced').hidden=!document.getElementById('smtp-advanced').hidden" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;padding:0;font-family:'Inter',sans-serif;">{% if smtp_from or smtp_host or smtp_port != "587" or smtp_security != "starttls" or smtp_auth == "false" or smtp_tls_verify == "false" %}▾{% else %}▸{% endif %} Advanced SMTP settings</button>
+      <div id="smtp-advanced" {% if not smtp_from and not smtp_host and smtp_port == "587" and smtp_security == "starttls" and smtp_auth != "false" and smtp_tls_verify != "false" %}hidden{% endif %}>
         <label for="smtp_from">Sender address <span style="font-size:10px;color:#4a5568;font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
         <input type="email" id="smtp_from" name="smtp_from" value="{{ smtp_from }}" placeholder="noreply@yourdomain.com" autocomplete="off">
         <div class="field-hint">If your SMTP server sends from a different address than the login above.</div>
         <label for="smtp_host">SMTP host <span style="font-size:10px;color:#4a5568;font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label>
         <input type="text" id="smtp_host" name="smtp_host" value="{{ smtp_host }}" placeholder="smtp.gmail.com" autocomplete="off">
         <div class="field-hint">Auto-detected for Gmail, iCloud, Outlook, Yahoo. Only set this if using a custom SMTP server.</div>
+        <label for="smtp_port">SMTP port</label>
+        <input type="number" id="smtp_port" name="smtp_port" value="{{ smtp_port }}" placeholder="587" min="1" max="65535" autocomplete="off">
+        <label for="smtp_security">SMTP security</label>
+        <select id="smtp_security" name="smtp_security" onchange="toggleSmtpOptions()">
+          <option value="starttls" {% if smtp_security == "starttls" %}selected{% endif %}>STARTTLS</option>
+          <option value="ssl" {% if smtp_security == "ssl" %}selected{% endif %}>TLS/SSL</option>
+          <option value="none" {% if smtp_security == "none" %}selected{% endif %}>None</option>
+        </select>
+        <label for="smtp_auth">SMTP authentication</label>
+        <select id="smtp_auth" name="smtp_auth" onchange="toggleSmtpOptions()">
+          <option value="true" {% if smtp_auth != "false" %}selected{% endif %}>Username and password</option>
+          <option value="false" {% if smtp_auth == "false" %}selected{% endif %}>No authentication</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:0.5rem;margin-top:0.9rem;font-size:12px;color:#cbd5e1;">
+          <input type="checkbox" id="smtp_tls_verify" name="smtp_tls_verify" {% if smtp_tls_verify != "false" %}checked{% endif %}>
+          Verify TLS certificates
+        </label>
       </div>
     </div>
     <button type="button" class="btn btn-ghost" id="test-email-btn" onclick="sendTestEmail()" style="font-size:12px;margin-top:0.5rem;">Send test email</button>
@@ -66,9 +83,15 @@ function toggleEmailFields() {
   var isNever = document.getElementById('notify_on').value === 'never';
   document.getElementById('email-fields').hidden = isNever;
   document.getElementById('unsub-card').hidden = isNever;
-  ['notify_email', 'smtp_user', 'smtp_password'].forEach(function(id) {
-    document.getElementById(id).required = !isNever;
-  });
+  document.getElementById('notify_email').required = !isNever;
+  toggleSmtpOptions();
+}
+function toggleSmtpOptions() {
+  var isNever = document.getElementById('notify_on').value === 'never';
+  var auth = document.getElementById('smtp_auth').value !== 'false';
+  document.getElementById('smtp_user').required = !isNever && auth;
+  document.getElementById('smtp_password').required = !isNever && auth;
+  document.getElementById('smtp_tls_verify').disabled = document.getElementById('smtp_security').value === 'none';
 }
 function togglePw() {
   const f = document.getElementById('smtp_password');
@@ -90,7 +113,11 @@ async function sendTestEmail() {
         smtp_user: document.getElementById('smtp_user').value,
         smtp_password: document.getElementById('smtp_password').value,
         smtp_from: document.getElementById('smtp_from').value,
-        smtp_host: document.getElementById('smtp_host').value
+        smtp_host: document.getElementById('smtp_host').value,
+        smtp_port: document.getElementById('smtp_port').value,
+        smtp_security: document.getElementById('smtp_security').value,
+        smtp_auth: document.getElementById('smtp_auth').value,
+        smtp_tls_verify: document.getElementById('smtp_tls_verify').checked ? 'true' : 'false'
       })
     });
     var data = await res.json();
@@ -174,5 +201,6 @@ async function toggleUnsubscribe() {
   }
 }
 checkUnsubStatus();
+toggleSmtpOptions();
 </script>
 {% endblock %}

@@ -1,5 +1,6 @@
 import smtplib
 import logging
+import ssl
 import requests
 from email.mime.text import MIMEText
 from . import config
@@ -7,6 +8,35 @@ from . import config
 logger = logging.getLogger(__name__)
 
 _unsubscribed_cache = {}
+
+def _as_bool(value, default=True) -> bool:
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value).strip().lower() not in ("0", "false", "no", "off", "none")
+
+
+def _smtp_security() -> str:
+    value = (config.SMTP_SECURITY or "starttls").strip().lower()
+    aliases = {
+        "plain": "none",
+        "plaintext": "none",
+        "off": "none",
+        "false": "none",
+        "0": "none",
+        "tls": "ssl",
+    }
+    value = aliases.get(value, value)
+    if value not in ("starttls", "ssl", "none"):
+        logger.warning("Unknown SMTP_SECURITY '%s'; falling back to starttls.", value)
+        return "starttls"
+    return value
+
+
+def _tls_context():
+    if _as_bool(config.SMTP_TLS_VERIFY, True):
+        return ssl.create_default_context()
+    return ssl._create_unverified_context()
+
 
 def _is_unsubscribed(email: str) -> bool:
     import time
@@ -43,7 +73,16 @@ def _smtp_host_for(email: str) -> str:
 
 
 def send(subject: str, body: str, raise_on_error: bool = False):
-    if not config.NOTIFY_EMAIL or not config.SMTP_USER or not config.SMTP_PASSWORD:
+    smtp_auth = _as_bool(config.SMTP_AUTH, True)
+    sender = config.SMTP_FROM or config.SMTP_USER
+    host = _smtp_host_for(config.SMTP_USER) if config.SMTP_USER else config.SMTP_HOST
+    if not config.NOTIFY_EMAIL or not sender or not host:
+        msg = "SMTP settings not configured. Set up notifications in the Bridge Bank web UI."
+        if raise_on_error:
+            raise RuntimeError(msg)
+        logger.warning("Email not sent (%s) — %s", subject, msg)
+        return
+    if smtp_auth and (not config.SMTP_USER or not config.SMTP_PASSWORD):
         msg = "SMTP credentials not configured. Set up notifications in the Bridge Bank web UI."
         if raise_on_error:
             raise RuntimeError(msg)
@@ -54,15 +93,21 @@ def send(subject: str, body: str, raise_on_error: bool = False):
         return
     mime = MIMEText(body)
     mime["Subject"] = subject
-    mime["From"]    = config.SMTP_FROM or config.SMTP_USER
+    mime["From"]    = sender
     mime["To"]      = config.NOTIFY_EMAIL
     try:
-        host = _smtp_host_for(config.SMTP_USER)
         port = int(config.SMTP_PORT or 587)
-        with smtplib.SMTP(host, port) as s:
-            s.starttls()
-            s.login(config.SMTP_USER, config.SMTP_PASSWORD)
-            s.sendmail(config.SMTP_FROM or config.SMTP_USER, config.NOTIFY_EMAIL, mime.as_string())
+        security = _smtp_security()
+        if security == "ssl":
+            smtp = smtplib.SMTP_SSL(host, port, context=_tls_context())
+        else:
+            smtp = smtplib.SMTP(host, port)
+        with smtp as s:
+            if security == "starttls":
+                s.starttls(context=_tls_context())
+            if smtp_auth:
+                s.login(config.SMTP_USER, config.SMTP_PASSWORD)
+            s.sendmail(sender, config.NOTIFY_EMAIL, mime.as_string())
         logger.info("Email sent: %s", subject)
     except Exception as e:
         logger.warning("Failed to send email: %s", e)
