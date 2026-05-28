@@ -7,6 +7,13 @@ log = logging.getLogger(__name__)
 
 STATE_FILE = "/data/state.json"
 EB_API     = "https://api.enablebanking.com"
+TRANSFER_MATCH_WINDOW_DAYS = 3
+
+def _config_flag(name, default=True):
+    raw = getattr(config, name, None)
+    if raw in (None, ""):
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 def _own_names():
     val = config.ACCOUNT_HOLDER_NAME or ""
@@ -194,6 +201,183 @@ def _fix_rule_note_casing(session, transactions):
                 txn.notes = original
                 break
 
+def _txn_account_id(txn):
+    return getattr(txn, "acct", None) or getattr(txn, "account", None)
+
+def _txn_transfer_id(txn):
+    return getattr(txn, "transferred_id", None) or getattr(txn, "transfer_id", None)
+
+def _txn_date(txn):
+    if hasattr(txn, "get_date"):
+        return txn.get_date()
+    raw = getattr(txn, "date", None)
+    if isinstance(raw, datetime.date):
+        return raw
+    if isinstance(raw, str):
+        return datetime.date.fromisoformat(raw[:10])
+    return None
+
+def _is_transfer_candidate(txn, account_ids):
+    account_id = _txn_account_id(txn)
+    amount = getattr(txn, "amount", None)
+    if account_id not in account_ids:
+        return False
+    if not amount:
+        return False
+    if _txn_transfer_id(txn):
+        return False
+    if not getattr(txn, "financial_id", None):
+        return False
+    if not bool(getattr(txn, "cleared", 0)):
+        return False
+    if getattr(txn, "is_parent", 0) or getattr(txn, "is_child", 0):
+        return False
+    if getattr(txn, "starting_balance_flag", 0):
+        return False
+    if getattr(txn, "reconciled", 0):
+        return False
+    return _txn_date(txn) is not None
+
+def _transfer_candidates_for(txn, candidates):
+    txn_date = _txn_date(txn)
+    txn_account = _txn_account_id(txn)
+    txn_amount = getattr(txn, "amount", 0)
+    matches = []
+    for other in candidates:
+        if other.id == txn.id:
+            continue
+        if _txn_account_id(other) == txn_account:
+            continue
+        if getattr(other, "amount", 0) != -txn_amount:
+            continue
+        other_date = _txn_date(other)
+        if other_date is None:
+            continue
+        distance = abs((other_date - txn_date).days)
+        if distance <= TRANSFER_MATCH_WINDOW_DAYS:
+            matches.append((distance, other))
+    matches.sort(key=lambda item: (item[0], _txn_date(item[1]), str(item[1].id)))
+    return [other for _, other in matches]
+
+def _find_transfer_pairs(transactions, account_ids):
+    candidates = [t for t in transactions if _is_transfer_candidate(t, account_ids)]
+    outgoing = [t for t in candidates if getattr(t, "amount", 0) < 0]
+    incoming = [t for t in candidates if getattr(t, "amount", 0) > 0]
+
+    incoming_matches = {t.id: _transfer_candidates_for(t, outgoing) for t in incoming}
+    pairs = []
+    matched = set()
+    for source in sorted(outgoing, key=lambda t: (_txn_date(t), abs(getattr(t, "amount", 0)), str(t.id))):
+        if source.id in matched:
+            continue
+        matches = _transfer_candidates_for(source, incoming)
+        if len(matches) != 1:
+            continue
+        dest = matches[0]
+        if dest.id in matched:
+            continue
+        if len(incoming_matches.get(dest.id, [])) != 1:
+            continue
+        pairs.append((source, dest))
+        matched.add(source.id)
+        matched.add(dest.id)
+    return pairs
+
+def _link_transfer_pair(session, source, dest, account_by_id, transfer_payee_by_account_id):
+    source_account_id = _txn_account_id(source)
+    dest_account_id = _txn_account_id(dest)
+    dest_payee = transfer_payee_by_account_id.get(dest_account_id)
+    source_payee = transfer_payee_by_account_id.get(source_account_id)
+    if not dest_payee or not source_payee:
+        return False
+
+    source.payee_id = dest_payee.id
+    dest.payee_id = source_payee.id
+    source.transferred_id = dest.id
+    dest.transferred_id = source.id
+
+    source_account = account_by_id.get(source_account_id)
+    dest_account = account_by_id.get(dest_account_id)
+    source_offbudget = bool(getattr(source_account, "offbudget", 0))
+    dest_offbudget = bool(getattr(dest_account, "offbudget", 0))
+    if source_offbudget == dest_offbudget:
+        source.category_id = None
+        dest.category_id = None
+
+    session.add(source)
+    session.add(dest)
+    return True
+
+def _get_transfer_match_start(accounts):
+    dates = []
+    for account in accounts:
+        if account.get("sync_mode") == "balance":
+            continue
+        raw = account.get("start_sync_date") or config.START_SYNC_DATE
+        if raw:
+            try:
+                dates.append(datetime.date.fromisoformat(raw[:10]))
+            except ValueError:
+                pass
+    if dates:
+        return min(dates)
+    return datetime.date.today() - datetime.timedelta(days=90)
+
+def _auto_link_internal_transfers(actual, accounts):
+    if not _config_flag("AUTO_LINK_TRANSFERS", True):
+        return 0
+
+    transfer_accounts = [
+        a for a in accounts
+        if a.get("sync_mode") != "balance" and a.get("actual_account")
+    ]
+    actual_account_names = sorted({a["actual_account"] for a in transfer_accounts})
+    if len(actual_account_names) < 2:
+        return 0
+
+    from actual.queries import get_account, get_payees, get_transactions
+
+    account_by_id = {}
+    transactions = []
+    start_date = _get_transfer_match_start(transfer_accounts)
+    end_date = datetime.date.today() + datetime.timedelta(days=1)
+
+    for name in actual_account_names:
+        account_obj = get_account(actual.session, name)
+        if not account_obj:
+            continue
+        account_by_id[account_obj.id] = account_obj
+        transactions.extend(
+            get_transactions(
+                actual.session,
+                start_date=start_date,
+                end_date=end_date,
+                account=account_obj,
+            )
+        )
+
+    if len(account_by_id) < 2:
+        return 0
+
+    account_ids = set(account_by_id)
+    transfer_payee_by_account_id = {
+        p.transfer_acct: p
+        for p in get_payees(actual.session)
+        if getattr(p, "transfer_acct", None) in account_ids
+    }
+    if len(transfer_payee_by_account_id) < len(account_ids):
+        log.warning("Could not auto-link transfers: missing Actual transfer payees for one or more accounts")
+        return 0
+
+    linked = 0
+    for source, dest in _find_transfer_pairs(transactions, account_ids):
+        if _link_transfer_pair(actual.session, source, dest, account_by_id, transfer_payee_by_account_id):
+            linked += 1
+
+    if linked:
+        log.info("Auto-linked %d internal transfer%s", linked, "" if linked == 1 else "s")
+    return linked
+
 def _sync_balance_account(account):
     """Sync a balance-only provider account. Returns (success, tx_count, label)."""
     from .providers import get_provider
@@ -361,7 +545,8 @@ def _sync_account(account, state):
                             except Exception:
                                 t = create_transaction(
                                     actual.session, date, account_obj, payee, notes,
-                                    amount=amount, cleared=False, imported_payee=payee
+                                    amount=amount, imported_id=ref or None,
+                                    cleared=False, imported_payee=payee
                                 )
                             already_matched.append(t)
                             if t.changed():
@@ -381,6 +566,8 @@ def _sync_account(account, state):
                             existing_txn = next((t for t in existing if str(t.id) == txn_id), None)
                             if existing_txn:
                                 existing_txn.cleared = True
+                                if ref:
+                                    existing_txn.financial_id = ref
                                 del pending_map[key]
                                 if ref: imported_refs.add(ref)
                                 updated += 1
@@ -398,7 +585,8 @@ def _sync_account(account, state):
                             except Exception:
                                 t = create_transaction(
                                     actual.session, date, account_obj, payee, notes,
-                                    amount=amount, cleared=True, imported_payee=payee
+                                    amount=amount, imported_id=ref or None,
+                                    cleared=True, imported_payee=payee
                                 )
                             already_matched.append(t)
                             if t.changed():
@@ -510,6 +698,22 @@ def run():
             log.error("Unexpected error syncing %s: %s", bank_label, e)
             errors.append(f"{bank_label}: {e}")
             db.log_sync("failure", tx_count=0, message=f"{bank_label}: {e}")
+
+    linked_transfers = 0
+    if not errors:
+        try:
+            from actual import Actual
+            with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
+                        encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
+                        file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
+                linked_transfers = _auto_link_internal_transfers(actual, all_accounts)
+                if linked_transfers:
+                    actual.commit()
+                    successes.append(
+                        f"Internal transfers: {linked_transfers} linked"
+                    )
+        except Exception as e:
+            log.error("Error auto-linking internal transfers: %s", e)
 
     _save_state(state)
 

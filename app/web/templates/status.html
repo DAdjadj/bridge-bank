@@ -173,6 +173,11 @@
           </div>
           <button class="btn btn-ghost" type="submit" style="font-size:12px;">Save</button>
         </div>
+        <input type="hidden" name="auto_link_transfers" value="false">
+        <label style="display:flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;color:#94a3b8;cursor:pointer;">
+          <input type="checkbox" name="auto_link_transfers" value="true" {% if auto_link_transfers %}checked{% endif %} style="width:14px;height:14px;margin:0;padding:0;appearance:auto;-webkit-appearance:auto;background:transparent;border:none;cursor:pointer;flex-shrink:0;">
+          <span>Auto-link internal transfers</span>
+        </label>
         <div style="font-size:12px;color:#94a3b8;margin-top:8px;" id="sync-times-preview">{% if sync_frequency != "0" %}Syncs at {{ sync_times }}{% if timezone %} ({{ timezone }}){% endif %}{% endif %}</div>
       </form>
       <script>

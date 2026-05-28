@@ -52,6 +52,12 @@ def _get_bank_account_limit() -> int:
     except Exception:
         return 2
 
+def _config_bool(name, default=True):
+    raw = getattr(config, name, None)
+    if raw in (None, ""):
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
 def _sync_bank_seats(accounts):
     if not config.LICENCE_KEY:
         db.set_setting("license_bank_limit_error", "")
@@ -356,8 +362,17 @@ def setup_sync():
         sync_time = request.form.get("sync_time", "06:00").strip()
         sync_frequency = request.form.get("sync_frequency", "24").strip()
         start_date = request.form.get("start_sync_date", "").strip()
+        auto_link_transfer_values = [
+            value.strip().lower()
+            for value in request.form.getlist("auto_link_transfers")
+        ]
         config.set("SYNC_TIME", sync_time)
         config.set("SYNC_FREQUENCY", sync_frequency)
+        auto_link_transfers = any(
+            value in ("1", "true", "yes", "on")
+            for value in auto_link_transfer_values
+        )
+        config.set("AUTO_LINK_TRANSFERS", "true" if auto_link_transfers else "false")
         if start_date:
             config.set("START_SYNC_DATE", start_date)
         _start_scheduler_if_ready()
@@ -367,6 +382,7 @@ def setup_sync():
         error=error,
         sync_time=config.SYNC_TIME or "06:00",
         sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or "24",
+        auto_link_transfers=_config_bool("AUTO_LINK_TRANSFERS", True),
         start_sync_date=config.START_SYNC_DATE or __import__('datetime').date.today().isoformat(),
         is_configured=config.is_configured(),
         has_synced=has_synced,
@@ -933,6 +949,7 @@ def status():
         last_sync=last_sync,
         sync_time=config.SYNC_TIME,
         sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or '24',
+        auto_link_transfers=_config_bool("AUTO_LINK_TRANSFERS", True),
         sync_times=_get_sync_times(),
         timezone=config.TIMEZONE or "",
         notify_email=config.NOTIFY_EMAIL,

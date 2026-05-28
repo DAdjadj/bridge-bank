@@ -14,6 +14,7 @@ Bridge Bank connects to your EU bank via open banking and imports your transacti
 - **Read-only, always** — Bridge Bank can never move money or modify your account
 - **Pending transaction tracking** — pending transactions are imported as uncleared and automatically confirmed when they settle
 - **Duplicate detection** — Bridge Bank tracks every transaction ID so nothing gets imported twice
+- **Internal transfer linking** — matching transfers between connected Actual accounts are marked as transfers, not income and expense
 - **Email notifications** — an alert if something goes wrong, and a warning before your bank session expires
 - **Your data, your machine** — bank data goes directly from Enable Banking to your machine, never our servers
 - **Lightweight** — runs as a single Docker container
@@ -133,7 +134,8 @@ On each sync run, Bridge Bank:
 3. Filters out any transaction IDs already imported
 4. Writes new transactions to Actual Budget
 5. Updates any previously pending transactions that have since settled
-6. Logs the result and sends an alert email if something went wrong
+6. Links matching internal transfers between connected Actual accounts
+7. Logs the result and sends an alert email if something went wrong
 
 ---
 

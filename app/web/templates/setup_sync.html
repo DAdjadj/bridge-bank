@@ -25,6 +25,12 @@
       <option value="12" {% if sync_frequency == "12" %}selected{% endif %}>Every 12 hours</option>
       <option value="24" {% if sync_frequency == "24" %}selected{% endif %}>Every 24 hours</option>
     </select>
+    <input type="hidden" name="auto_link_transfers" value="false">
+    <label style="display:flex;align-items:center;gap:8px;margin-top:1rem;font-size:13px;color:#e8edf5;cursor:pointer;">
+      <input type="checkbox" name="auto_link_transfers" value="true" {% if auto_link_transfers %}checked{% endif %} style="width:14px;height:14px;margin:0;padding:0;appearance:auto;-webkit-appearance:auto;background:transparent;border:none;cursor:pointer;flex-shrink:0;">
+      <span>Auto-link transfers between synced accounts</span>
+    </label>
+    <div class="field-hint">When two connected Actual accounts have matching opposite transactions, Bridge Bank marks them as one internal transfer.</div>
     {% if not has_synced %}
     <label for="start_sync_date">Start syncing from</label>
     <input type="date" id="start_sync_date" name="start_sync_date" value="{{ start_sync_date }}" required>
