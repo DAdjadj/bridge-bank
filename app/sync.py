@@ -217,14 +217,14 @@ def _txn_date(txn):
         return datetime.date.fromisoformat(raw[:10])
     return None
 
-def _is_transfer_candidate(txn, account_ids):
+def _is_transfer_candidate(txn, account_ids, allow_existing_transfer=False):
     account_id = _txn_account_id(txn)
     amount = getattr(txn, "amount", None)
     if account_id not in account_ids:
         return False
     if not amount:
         return False
-    if _txn_transfer_id(txn):
+    if _txn_transfer_id(txn) and not allow_existing_transfer:
         return False
     if not getattr(txn, "financial_id", None):
         return False
@@ -259,8 +259,11 @@ def _transfer_candidates_for(txn, candidates):
     matches.sort(key=lambda item: (item[0], _txn_date(item[1]), str(item[1].id)))
     return [other for _, other in matches]
 
-def _find_transfer_pairs(transactions, account_ids):
-    candidates = [t for t in transactions if _is_transfer_candidate(t, account_ids)]
+def _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=False):
+    candidates = [
+        t for t in transactions
+        if _is_transfer_candidate(t, account_ids, allow_existing_transfers)
+    ]
     outgoing = [t for t in candidates if getattr(t, "amount", 0) < 0]
     incoming = [t for t in candidates if getattr(t, "amount", 0) > 0]
 
@@ -283,6 +286,36 @@ def _find_transfer_pairs(transactions, account_ids):
         matched.add(dest.id)
     return pairs
 
+def _can_relink_imported_pair(source, dest, txn_by_id, account_ids):
+    for txn, other in ((source, dest), (dest, source)):
+        transfer_id = _txn_transfer_id(txn)
+        if not transfer_id or transfer_id == other.id:
+            continue
+        existing = txn_by_id.get(transfer_id)
+        if not existing:
+            return False
+        if getattr(existing, "financial_id", None):
+            return False
+        if _txn_account_id(existing) not in account_ids:
+            return False
+        if getattr(existing, "amount", 0) != -getattr(txn, "amount", 0):
+            return False
+    return True
+
+def _remove_generated_counterparts(session, source, dest, txn_by_id):
+    removed = 0
+    for txn, other in ((source, dest), (dest, source)):
+        transfer_id = _txn_transfer_id(txn)
+        if not transfer_id or transfer_id == other.id:
+            continue
+        existing = txn_by_id.get(transfer_id)
+        if existing and not getattr(existing, "financial_id", None):
+            existing.transferred_id = None
+            existing.tombstone = 1
+            session.add(existing)
+            removed += 1
+    return removed
+
 def _link_transfer_pair(session, source, dest, account_by_id, transfer_payee_by_account_id):
     source_account_id = _txn_account_id(source)
     dest_account_id = _txn_account_id(dest)
@@ -291,6 +324,12 @@ def _link_transfer_pair(session, source, dest, account_by_id, transfer_payee_by_
     if not dest_payee or not source_payee:
         return False
 
+    changed = (
+        source.payee_id != dest_payee.id
+        or dest.payee_id != source_payee.id
+        or source.transferred_id != dest.id
+        or dest.transferred_id != source.id
+    )
     source.payee_id = dest_payee.id
     dest.payee_id = source_payee.id
     source.transferred_id = dest.id
@@ -301,12 +340,14 @@ def _link_transfer_pair(session, source, dest, account_by_id, transfer_payee_by_
     source_offbudget = bool(getattr(source_account, "offbudget", 0))
     dest_offbudget = bool(getattr(dest_account, "offbudget", 0))
     if source_offbudget == dest_offbudget:
+        changed = changed or source.category_id is not None or dest.category_id is not None
         source.category_id = None
         dest.category_id = None
 
-    session.add(source)
-    session.add(dest)
-    return True
+    if changed:
+        session.add(source)
+        session.add(dest)
+    return changed
 
 def _get_transfer_match_start(accounts):
     dates = []
@@ -369,13 +410,22 @@ def _auto_link_internal_transfers(actual, accounts):
         log.warning("Could not auto-link transfers: missing Actual transfer payees for one or more accounts")
         return 0
 
-    linked = 0
-    for source, dest in _find_transfer_pairs(transactions, account_ids):
+    linked = removed = 0
+    txn_by_id = {t.id: t for t in transactions}
+    for source, dest in _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=True):
+        if not _can_relink_imported_pair(source, dest, txn_by_id, account_ids):
+            continue
+        removed += _remove_generated_counterparts(actual.session, source, dest, txn_by_id)
         if _link_transfer_pair(actual.session, source, dest, account_by_id, transfer_payee_by_account_id):
             linked += 1
 
     if linked:
-        log.info("Auto-linked %d internal transfer%s", linked, "" if linked == 1 else "s")
+        log.info(
+            "Auto-linked %d internal transfer%s%s",
+            linked,
+            "" if linked == 1 else "s",
+            f" and removed {removed} generated counterpart{'s' if removed != 1 else ''}" if removed else "",
+        )
     return linked
 
 def _sync_balance_account(account):
@@ -735,28 +785,55 @@ def run():
 
 def _check_for_update():
     """Check Docker Hub for a newer image and store result in DB."""
-    import subprocess, os, requests as _req
+    import json, platform, subprocess, os, requests as _req
     if not os.path.exists("/var/run/docker.sock"):
         return
     repo = "daalves/bridge-bank"
     tag = "latest"
     token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
     token = token_resp.json().get("token", "")
-    manifest_resp = _req.head(
+
+    accept = (
+        "application/vnd.oci.image.index.v1+json, "
+        "application/vnd.docker.distribution.manifest.list.v2+json, "
+        "application/vnd.oci.image.manifest.v1+json, "
+        "application/vnd.docker.distribution.manifest.v2+json"
+    )
+    manifest_resp = _req.get(
         f"https://registry-1.docker.io/v2/{repo}/manifests/{tag}",
         headers={
             "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
+            "Accept": accept,
         },
         timeout=5
     )
-    remote_digest = manifest_resp.headers.get("Docker-Content-Digest", "")
-    local_digest = subprocess.run(
-        ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", f"{repo}:{tag}"],
+    manifest_resp.raise_for_status()
+    remote_digests = {manifest_resp.headers.get("Docker-Content-Digest", "")}
+    content_type = manifest_resp.headers.get("Content-Type", "")
+    if "manifest.list" in content_type or "image.index" in content_type:
+        machine = platform.machine().lower()
+        arch = "amd64" if machine in ("x86_64", "amd64") else "arm64" if machine in ("aarch64", "arm64") else "arm" if machine.startswith("armv") else machine
+        variant = "v7" if machine.startswith("armv7") else "v6" if machine.startswith("armv6") else ""
+        for manifest in manifest_resp.json().get("manifests", []):
+            platform_info = manifest.get("platform") or {}
+            if platform_info.get("architecture") != arch:
+                continue
+            if variant and platform_info.get("variant") != variant:
+                continue
+            remote_digests.add(manifest.get("digest", ""))
+    remote_digests = {digest for digest in remote_digests if digest}
+
+    local_result = subprocess.run(
+        ["docker", "inspect", "--format", "{{json .RepoDigests}}", f"{repo}:{tag}"],
         capture_output=True, text=True, timeout=10
-    ).stdout.strip()
-    local_sha = local_digest.split("@")[-1] if "@" in local_digest else ""
-    update_available = remote_digest != local_sha and remote_digest != ""
+    )
+    local_digests = set()
+    if local_result.returncode == 0:
+        for digest in json.loads(local_result.stdout.strip() or "[]"):
+            if "@" in digest:
+                local_digests.add(digest.split("@")[-1])
+
+    update_available = bool(remote_digests and local_digests and remote_digests.isdisjoint(local_digests))
     db.set_setting("update_available", "1" if update_available else "0")
     if update_available:
         log.info("Update available for %s", repo)

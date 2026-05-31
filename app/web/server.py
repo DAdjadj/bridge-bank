@@ -30,20 +30,111 @@ def inject_globals():
 
 def _detect_container_name():
     """Detect container name from mounted compose file or fall back to default."""
-    import os
+    import os, re, subprocess
+    candidates = []
     compose_path = "/compose/docker-compose.yml"
     if os.path.exists(compose_path):
         try:
             with open(compose_path) as f:
                 for line in f:
                     if "container_name:" in line:
-                        return line.split("container_name:")[-1].strip().strip('"').strip("'")
+                        candidates.append(line.split("container_name:")[-1].strip().strip('"').strip("'"))
+                        break
         except Exception:
             pass
-    return "bridge-bank"
+    try:
+        with open("/etc/hostname") as f:
+            hostname = f.read().strip()
+            if re.fullmatch(r"[0-9a-f]{12,64}", hostname):
+                candidates.append(hostname)
+    except Exception:
+        pass
+    try:
+        with open("/proc/self/cgroup") as f:
+            for line in f:
+                match = re.search(r"([0-9a-f]{64})", line)
+                if match:
+                    candidates.append(match.group(1))
+    except Exception:
+        pass
+    candidates.append("bridge-bank")
+
+    seen = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "--format", "{{.Id}}", candidate],
+                capture_output=True, text=True, timeout=3,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return candidate
+        except Exception:
+            pass
+    return candidates[0]
 
 CONTAINER_NAME = _detect_container_name()
 IMAGE_NAME = "daalves/bridge-bank:latest"
+
+def _docker_arch():
+    import platform
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64", ""
+    if machine in ("aarch64", "arm64"):
+        return "arm64", ""
+    if machine.startswith("armv7"):
+        return "arm", "v7"
+    if machine.startswith("armv6"):
+        return "arm", "v6"
+    return machine, ""
+
+def _remote_image_digests(repo, tag, token):
+    import requests as _req
+    accept = (
+        "application/vnd.oci.image.index.v1+json, "
+        "application/vnd.docker.distribution.manifest.list.v2+json, "
+        "application/vnd.oci.image.manifest.v1+json, "
+        "application/vnd.docker.distribution.manifest.v2+json"
+    )
+    resp = _req.get(
+        f"https://registry-1.docker.io/v2/{repo}/manifests/{tag}",
+        headers={"Authorization": f"Bearer {token}", "Accept": accept},
+        timeout=5,
+    )
+    resp.raise_for_status()
+    digests = {resp.headers.get("Docker-Content-Digest", "")}
+    content_type = resp.headers.get("Content-Type", "")
+    if "manifest.list" in content_type or "image.index" in content_type:
+        arch, variant = _docker_arch()
+        for manifest in resp.json().get("manifests", []):
+            platform_info = manifest.get("platform") or {}
+            if platform_info.get("architecture") != arch:
+                continue
+            if variant and platform_info.get("variant") != variant:
+                continue
+            digests.add(manifest.get("digest", ""))
+    return {digest for digest in digests if digest}
+
+def _local_image_digests(image_name):
+    import json, subprocess
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{json .RepoDigests}}", image_name],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode != 0:
+        return set()
+    try:
+        repo_digests = json.loads(result.stdout.strip() or "[]")
+    except Exception:
+        return set()
+    return {
+        digest.split("@")[-1]
+        for digest in repo_digests
+        if "@" in digest
+    }
 
 def _get_bank_account_limit() -> int:
     try:
@@ -1150,34 +1241,30 @@ def update_check():
         tag = IMAGE_NAME.split(":")[1] if ":" in IMAGE_NAME else "latest"
         token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
         token = token_resp.json().get("token", "")
-        # HEAD request for the manifest list digest — this matches what
-        # docker stores in RepoDigests after pulling a multi-arch image.
-        manifest_resp = _req.head(
-            f"https://registry-1.docker.io/v2/{repo}/manifests/{tag}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
-            },
-            timeout=5
-        )
-        remote_digest = manifest_resp.headers.get("Docker-Content-Digest", "")
-        local_digest = subprocess.run(
-            ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", IMAGE_NAME],
-            capture_output=True, text=True, timeout=10
-        ).stdout.strip()
-        local_sha = local_digest.split("@")[-1] if "@" in local_digest else ""
-        # Also check if the pulled image differs from what the container is running
+        remote_digests = _remote_image_digests(repo, tag, token)
+        local_digests = _local_image_digests(IMAGE_NAME)
+
         container_image = subprocess.run(
             ["docker", "inspect", "--format", "{{.Image}}", CONTAINER_NAME],
             capture_output=True, text=True, timeout=10
-        ).stdout.strip()
+        )
         pulled_image_id = subprocess.run(
             ["docker", "inspect", "--format", "{{.Id}}", IMAGE_NAME],
             capture_output=True, text=True, timeout=10
-        ).stdout.strip()
-        container_outdated = container_image != pulled_image_id
-        available = (remote_digest != local_sha and remote_digest != "") or container_outdated
-        logger.info("Update check: remote=%s local=%s container_outdated=%s available=%s", remote_digest[:20], local_sha[:20], container_outdated, available)
+        )
+        running_image_id = container_image.stdout.strip() if container_image.returncode == 0 else ""
+        local_image_id = pulled_image_id.stdout.strip() if pulled_image_id.returncode == 0 else ""
+        container_outdated = bool(running_image_id and local_image_id and running_image_id != local_image_id)
+        image_outdated = bool(remote_digests and local_digests and remote_digests.isdisjoint(local_digests))
+        available = image_outdated or container_outdated
+        logger.info(
+            "Update check: remote=%s local=%s container=%s pulled=%s available=%s",
+            ",".join(sorted(remote_digests))[:40],
+            ",".join(sorted(local_digests))[:40],
+            running_image_id[:20],
+            local_image_id[:20],
+            available,
+        )
         return jsonify({"available": available})
     except Exception as e:
         logger.warning("Update check failed: %s", e)

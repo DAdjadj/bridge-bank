@@ -284,15 +284,25 @@ async function runUpdate() {
   }
 }
 
-// Check for updates on page load
-fetch('/update/check').then(function(r) { return r.json(); }).then(function(d) {
-  if (d.available) {
-    var btn = document.getElementById('update-btn');
+function setUpdateButton(available) {
+  var btn = document.getElementById('update-btn');
+  if (!btn) return;
+  if (available) {
     btn.textContent = 'Update available';
     btn.style.background = '#10b981';
     btn.style.color = '#fff';
     btn.style.borderColor = 'transparent';
+  } else {
+    btn.textContent = 'Check for updates';
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
   }
+}
+
+// Check for updates on page load
+fetch('/update/check').then(function(r) { return r.json(); }).then(function(d) {
+  setUpdateButton(!!d.available);
 }).catch(function() {});
 
 async function runSync() {
