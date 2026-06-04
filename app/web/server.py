@@ -800,10 +800,13 @@ def reauthorise():
     if not bank_name or not bank_country:
         return redirect(url_for("bank"))
     try:
-        from .. import enablebanking
         db.set_setting("pending_reauth_account_id", account_id)
         db.set_setting("pending_bank_name", bank_name)
         db.set_setting("pending_bank_country", bank_country)
+        scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+        host   = request.headers.get("X-Forwarded-Host", request.host)
+        config.set("BRIDGE_BANK_URL", f"{scheme}://{host}")
+        from .. import enablebanking
         result   = enablebanking.start_auth(bank_name, bank_country)
         auth_url = result["url"]
     except Exception as e:
