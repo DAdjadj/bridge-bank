@@ -79,7 +79,8 @@ def _get_session(account):
 
 def _fetch_transactions(account_uid, date_from):
     headers = _make_headers()
-    params  = {"date_from": date_from.isoformat(), "date_to": datetime.date.today().isoformat()}
+    base_params = {"date_from": date_from.isoformat(), "date_to": datetime.date.today().isoformat()}
+    params  = dict(base_params)
     txns    = []
     url     = f"{EB_API}/accounts/{account_uid}/transactions"
     page    = 0
@@ -101,7 +102,7 @@ def _fetch_transactions(account_uid, date_from):
         txns.extend(data.get("transactions", []))
         ck  = data.get("continuation_key")
         url = f"{EB_API}/accounts/{account_uid}/transactions" if ck else None
-        params = {"continuation_key": ck} if ck else {}
+        params = {**base_params, "continuation_key": ck} if ck else {}
         page += 1
     log.info("Fetched %d transactions from Enable Banking", len(txns))
     return txns
