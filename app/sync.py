@@ -8,7 +8,6 @@ log = logging.getLogger(__name__)
 STATE_FILE = "/data/state.json"
 EB_API     = "https://api.enablebanking.com"
 TRANSFER_MATCH_WINDOW_DAYS = 3
-ACTUAL_TIMEOUT_SECONDS = 180
 ACTUAL_RETRY_DELAYS_SECONDS = (15, 60)
 
 def _config_flag(name, default=True):
@@ -24,7 +23,6 @@ def _actual_kwargs():
         "encryption_password": config.ACTUAL_ENCRYPTION_PASSWORD or None,
         "file": config.ACTUAL_SYNC_ID,
         "data_dir": "/data/actual-cache",
-        "timeout": ACTUAL_TIMEOUT_SECONDS,
     }
 
 def _actual_http_target(request):
