@@ -142,6 +142,19 @@ def _parse_notes(t):
 def _get_entry_ref(t):
     return t.get("entry_reference") or t.get("transaction_id") or ""
 
+def _record_reconciled_transaction(transaction, existing_ids: set[str], new_txn: list) -> str:
+    txn_id = str(transaction.id)
+    is_new_txn = txn_id not in existing_ids
+    if is_new_txn or transaction.changed():
+        if is_new_txn:
+            existing_ids.add(txn_id)
+            result = "added"
+        else:
+            result = "updated"
+        new_txn.append(transaction)
+        return result
+    return "skipped"
+
 def _patch_payee_name_rules(session):
     """Remap 'payee_name' to 'description' in rule actions so actualpy can process them.
 
@@ -565,6 +578,7 @@ def _sync_account(account, state):
                     file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
             account_obj    = get_or_create_account(actual.session, actual_account_name)
             existing       = list(get_transactions(actual.session, account=account_obj))
+            existing_ids   = {str(t.id) for t in existing}
             already_matched = existing[:]
             new_txn        = []
 
@@ -600,10 +614,13 @@ def _sync_account(account, state):
                                     cleared=False, imported_payee=payee
                                 )
                             already_matched.append(t)
-                            if t.changed():
+                            result = _record_reconciled_transaction(t, existing_ids, new_txn)
+                            if result != "skipped":
                                 pending_map[key] = str(t.id)
-                                added += 1
-                                new_txn.append(t)
+                                if result == "added":
+                                    added += 1
+                                else:
+                                    updated += 1
                             else:
                                 skipped += 1
                         else:
@@ -640,10 +657,13 @@ def _sync_account(account, state):
                                     cleared=True, imported_payee=payee
                                 )
                             already_matched.append(t)
-                            if t.changed():
-                                if ref: imported_refs.add(ref)
-                                new_txn.append(t)
+                            if ref:
+                                imported_refs.add(ref)
+                            result = _record_reconciled_transaction(t, existing_ids, new_txn)
+                            if result == "added":
                                 added += 1
+                            elif result == "updated":
+                                updated += 1
                             else:
                                 skipped += 1
                 except Exception as e:
@@ -668,7 +688,7 @@ def _sync_account(account, state):
     acct_state["pending_map"]     = pending_map
     acct_state["imported_refs"]   = list(imported_refs)
     state["accounts"][account_id] = acct_state
-    return True, added, "OK"
+    return True, added + updated, "OK"
 
 def run():
     log.info("Starting sync...")
