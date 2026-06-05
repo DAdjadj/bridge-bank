@@ -1,4 +1,4 @@
-import os, json, time, logging, datetime, decimal, requests
+import contextlib, os, json, sys, time, logging, datetime, decimal, requests
 
 from . import config, db, email_notify, licence
 
@@ -26,6 +26,97 @@ def _actual_kwargs():
         "data_dir": "/data/actual-cache",
         "timeout": ACTUAL_TIMEOUT_SECONDS,
     }
+
+def _actual_http_target(request):
+    if not request:
+        return ""
+    method = getattr(request, "method", "")
+    url = getattr(request, "url", None)
+    if not url:
+        return str(request)
+    scheme = getattr(url, "scheme", "")
+    host = getattr(url, "host", "")
+    port = getattr(url, "port", None)
+    path = getattr(url, "path", "") or "/"
+    default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    host_part = f"{host}:{port}" if port and not default_port else host
+    return f"{method} {scheme}://{host_part}{path}".strip()
+
+def _actual_http_target_from_exception(exc):
+    current = exc
+    seen = set()
+    while current and id(current) not in seen:
+        seen.add(id(current))
+        target = _actual_http_target(getattr(current, "request", None))
+        if target:
+            return target
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    return ""
+
+def _attach_actual_diagnostics(actual, label):
+    session = getattr(actual, "_requests_session", None)
+    if not session or getattr(session, "_bridge_bank_diagnostics", False):
+        return
+
+    def on_request(request):
+        request.extensions["bridge_bank_started_at"] = time.monotonic()
+        log.info("%s: Actual HTTP request started: %s", label, _actual_http_target(request))
+
+    def on_response(response):
+        started = response.request.extensions.get("bridge_bank_started_at")
+        elapsed = f" in {time.monotonic() - started:.1f}s" if started else ""
+        log.info(
+            "%s: Actual HTTP response: %s %s%s",
+            label,
+            response.status_code,
+            _actual_http_target(response.request),
+            elapsed,
+        )
+
+    session.event_hooks.setdefault("request", []).append(on_request)
+    session.event_hooks.setdefault("response", []).append(on_response)
+    session._bridge_bank_diagnostics = True
+
+@contextlib.contextmanager
+def _actual_phase(label, phase):
+    started = time.monotonic()
+    log.info("%s: Actual phase started: %s", label, phase)
+    try:
+        yield
+    except Exception as e:
+        target = _actual_http_target_from_exception(e)
+        target_msg = f" Last HTTP request: {target}." if target else ""
+        log.error(
+            "%s: Actual phase failed: %s after %.1fs.%s Error: %s",
+            label,
+            phase,
+            time.monotonic() - started,
+            target_msg,
+            e,
+            exc_info=True,
+        )
+        raise
+    else:
+        log.info("%s: Actual phase completed: %s in %.1fs", label, phase, time.monotonic() - started)
+
+@contextlib.contextmanager
+def _actual_client(label):
+    from actual import Actual
+    actual = Actual(**_actual_kwargs())
+    _attach_actual_diagnostics(actual, label)
+    try:
+        with _actual_phase(label, "open/load Actual budget"):
+            actual.__enter__()
+    except BaseException:
+        actual.__exit__(*sys.exc_info())
+        raise
+    try:
+        yield actual
+    except BaseException:
+        actual.__exit__(*sys.exc_info())
+        raise
+    else:
+        actual.__exit__(None, None, None)
 
 def _is_transient_actual_error(exc):
     parts = []
@@ -522,36 +613,39 @@ def _sync_balance_account(account):
         return False, 0, msg
 
     def write_balance_to_actual():
-        from actual import Actual
         from actual.queries import get_or_create_account, get_transactions, create_transaction
 
-        with Actual(**_actual_kwargs()) as actual:
-            account_obj = get_or_create_account(actual.session, actual_name)
-            # actualpy amounts are in whole currency units (e.g. 69.15 = €69.15)
-            target_amount = float(target_balance)
-            balance_note = f"{provider.display_name} portfolio value"
+        with _actual_client(bank_label) as actual:
+            with _actual_phase(bank_label, "load Actual balance account"):
+                account_obj = get_or_create_account(actual.session, actual_name)
+                existing = list(get_transactions(actual.session, account=account_obj))
 
-            # Delete ALL existing transactions in this account, then create
-            # a single transaction with the exact portfolio value. This ensures
-            # the account balance matches the provider exactly.
-            existing = list(get_transactions(actual.session, account=account_obj))
-            for txn in existing:
-                txn.delete()
+            with _actual_phase(bank_label, "replace balance transaction"):
+                # actualpy amounts are in whole currency units (e.g. 69.15 = €69.15)
+                target_amount = float(target_balance)
+                balance_note = f"{provider.display_name} portfolio value"
 
-            tx_count = 0
-            if target_amount != 0:
-                create_transaction(
-                    actual.session,
-                    datetime.date.today(),
-                    account_obj,
-                    f"{provider.display_name}",
-                    balance_note,
-                    amount=target_amount,
-                    cleared=True,
-                )
-                tx_count = 1
+                # Delete ALL existing transactions in this account, then create
+                # a single transaction with the exact portfolio value. This ensures
+                # the account balance matches the provider exactly.
+                for txn in existing:
+                    txn.delete()
 
-            actual.commit()
+                tx_count = 0
+                if target_amount != 0:
+                    create_transaction(
+                        actual.session,
+                        datetime.date.today(),
+                        account_obj,
+                        f"{provider.display_name}",
+                        balance_note,
+                        amount=target_amount,
+                        cleared=True,
+                    )
+                    tx_count = 1
+
+            with _actual_phase(bank_label, "commit Actual balance changes"):
+                actual.commit()
             log.info("Balance sync %s: set to %s EUR", bank_label, target_amount)
             return tx_count
 
@@ -625,111 +719,114 @@ def _sync_account(account, state):
         pending_map = dict(pending_map_start)
         imported_refs = set(imported_refs_start)
         added = updated = skipped = 0
-        from actual import Actual
         from actual.queries import get_or_create_account, reconcile_transaction, get_transactions, create_transaction
 
-        with Actual(**_actual_kwargs()) as actual:
-            account_obj    = get_or_create_account(actual.session, actual_account_name)
-            existing       = list(get_transactions(actual.session, account=account_obj))
-            existing_ids   = {str(t.id) for t in existing}
-            already_matched = existing[:]
-            new_txn        = []
+        with _actual_client(bank_label) as actual:
+            with _actual_phase(bank_label, "load Actual account and existing transactions"):
+                account_obj    = get_or_create_account(actual.session, actual_account_name)
+                existing       = list(get_transactions(actual.session, account=account_obj))
+                existing_ids   = {str(t.id) for t in existing}
+                already_matched = existing[:]
+                new_txn        = []
 
             skip_pending = bool(account.get("skip_pending"))
 
-            for txn in raw:
-                try:
-                    status = txn.get("status", "BOOK")
-                    if status == "PDNG" and skip_pending:
-                        skipped += 1
-                        continue
-                    date   = _parse_date(txn)
-                    amount = _parse_amount(txn)
-                    payee  = _parse_payee(txn)
-                    notes  = _parse_notes(txn)
-                    if notes and notes.strip().lower() == payee.strip().lower():
-                        notes = ""
-                    ref    = _get_entry_ref(txn)
-                    key    = f"{date}|{amount}"
-
-                    if status == "PDNG":
-                        if key not in pending_map:
-                            try:
-                                t = reconcile_transaction(
-                                    actual.session, date, account_obj, payee, notes,
-                                    None, amount, imported_id=ref or None, cleared=False,
-                                    imported_payee=payee, already_matched=already_matched
-                                )
-                            except Exception:
-                                t = create_transaction(
-                                    actual.session, date, account_obj, payee, notes,
-                                    amount=amount, imported_id=ref or None,
-                                    cleared=False, imported_payee=payee
-                                )
-                            already_matched.append(t)
-                            result = _record_reconciled_transaction(t, existing_ids, new_txn)
-                            if result != "skipped":
-                                pending_map[key] = str(t.id)
-                                if result == "added":
-                                    added += 1
-                                else:
-                                    updated += 1
-                            else:
-                                skipped += 1
-                        else:
-                            skipped += 1
-                    else:
-                        if ref and ref in imported_refs:
+            with _actual_phase(bank_label, "reconcile fetched transactions"):
+                for txn in raw:
+                    try:
+                        status = txn.get("status", "BOOK")
+                        if status == "PDNG" and skip_pending:
                             skipped += 1
                             continue
-                        if key in pending_map:
-                            txn_id       = pending_map[key]
-                            existing_txn = next((t for t in existing if str(t.id) == txn_id), None)
-                            if existing_txn:
-                                existing_txn.cleared = True
-                                if ref:
-                                    existing_txn.financial_id = ref
-                                del pending_map[key]
-                                if ref: imported_refs.add(ref)
-                                updated += 1
+                        date   = _parse_date(txn)
+                        amount = _parse_amount(txn)
+                        payee  = _parse_payee(txn)
+                        notes  = _parse_notes(txn)
+                        if notes and notes.strip().lower() == payee.strip().lower():
+                            notes = ""
+                        ref    = _get_entry_ref(txn)
+                        key    = f"{date}|{amount}"
+
+                        if status == "PDNG":
+                            if key not in pending_map:
+                                try:
+                                    t = reconcile_transaction(
+                                        actual.session, date, account_obj, payee, notes,
+                                        None, amount, imported_id=ref or None, cleared=False,
+                                        imported_payee=payee, already_matched=already_matched
+                                    )
+                                except Exception:
+                                    t = create_transaction(
+                                        actual.session, date, account_obj, payee, notes,
+                                        amount=amount, imported_id=ref or None,
+                                        cleared=False, imported_payee=payee
+                                    )
+                                already_matched.append(t)
+                                result = _record_reconciled_transaction(t, existing_ids, new_txn)
+                                if result != "skipped":
+                                    pending_map[key] = str(t.id)
+                                    if result == "added":
+                                        added += 1
+                                    else:
+                                        updated += 1
+                                else:
+                                    skipped += 1
                             else:
-                                del pending_map[key]
-                                if ref: imported_refs.add(ref)
                                 skipped += 1
                         else:
-                            try:
-                                t = reconcile_transaction(
-                                    actual.session, date, account_obj, payee, notes,
-                                    None, amount, imported_id=ref or None, cleared=True,
-                                    imported_payee=payee, already_matched=already_matched
-                                )
-                            except Exception:
-                                t = create_transaction(
-                                    actual.session, date, account_obj, payee, notes,
-                                    amount=amount, imported_id=ref or None,
-                                    cleared=True, imported_payee=payee
-                                )
-                            already_matched.append(t)
-                            if ref:
-                                imported_refs.add(ref)
-                            result = _record_reconciled_transaction(t, existing_ids, new_txn)
-                            if result == "added":
-                                added += 1
-                            elif result == "updated":
-                                updated += 1
-                            else:
+                            if ref and ref in imported_refs:
                                 skipped += 1
-                except Exception as e:
-                    log.warning("Skipping transaction: %s | %s", e, txn)
+                                continue
+                            if key in pending_map:
+                                txn_id       = pending_map[key]
+                                existing_txn = next((t for t in existing if str(t.id) == txn_id), None)
+                                if existing_txn:
+                                    existing_txn.cleared = True
+                                    if ref:
+                                        existing_txn.financial_id = ref
+                                    del pending_map[key]
+                                    if ref: imported_refs.add(ref)
+                                    updated += 1
+                                else:
+                                    del pending_map[key]
+                                    if ref: imported_refs.add(ref)
+                                    skipped += 1
+                            else:
+                                try:
+                                    t = reconcile_transaction(
+                                        actual.session, date, account_obj, payee, notes,
+                                        None, amount, imported_id=ref or None, cleared=True,
+                                        imported_payee=payee, already_matched=already_matched
+                                    )
+                                except Exception:
+                                    t = create_transaction(
+                                        actual.session, date, account_obj, payee, notes,
+                                        amount=amount, imported_id=ref or None,
+                                        cleared=True, imported_payee=payee
+                                    )
+                                already_matched.append(t)
+                                if ref:
+                                    imported_refs.add(ref)
+                                result = _record_reconciled_transaction(t, existing_ids, new_txn)
+                                if result == "added":
+                                    added += 1
+                                elif result == "updated":
+                                    updated += 1
+                                else:
+                                    skipped += 1
+                    except Exception as e:
+                        log.warning("Skipping transaction: %s | %s", e, txn)
 
             try:
-                _patch_payee_name_rules(actual.session)
-                actual.run_rules(new_txn)
-                _fix_rule_note_casing(actual.session, new_txn)
+                with _actual_phase(bank_label, "apply Actual rules"):
+                    _patch_payee_name_rules(actual.session)
+                    actual.run_rules(new_txn)
+                    _fix_rule_note_casing(actual.session, new_txn)
             except Exception as e:
                 log.error("Error applying rules: %s", e)
 
-            actual.commit()
+            with _actual_phase(bank_label, "commit Actual transaction changes"):
+                actual.commit()
             log.info("Done %s: %d added, %d confirmed, %d skipped", bank_label, added, updated, skipped)
             return pending_map, imported_refs, added, updated
 
@@ -832,11 +929,12 @@ def run():
     linked_transfers = 0
     if not errors:
         def link_internal_transfers():
-            from actual import Actual
-            with Actual(**_actual_kwargs()) as actual:
-                linked = _auto_link_internal_transfers(actual, all_accounts)
+            with _actual_client("Internal transfers") as actual:
+                with _actual_phase("Internal transfers", "scan and link transfers"):
+                    linked = _auto_link_internal_transfers(actual, all_accounts)
                 if linked:
-                    actual.commit()
+                    with _actual_phase("Internal transfers", "commit transfer links"):
+                        actual.commit()
                 return linked
 
         try:
