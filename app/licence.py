@@ -102,8 +102,8 @@ def activate(key):
             db.set_setting("licence_key", key)
             return {"valid": True, "error": None}
         elif resp.status_code == 409:
-            db.set_setting("licence_key", key)
-            return {"valid": True, "error": None}
+            msg = data.get("error") or "Activation limit reached for this licence."
+            return {"valid": False, "error": msg}
         else:
             msg = data.get("error") or "Invalid license key."
             return {"valid": False, "error": msg}
