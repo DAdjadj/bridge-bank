@@ -8,12 +8,63 @@ log = logging.getLogger(__name__)
 STATE_FILE = "/data/state.json"
 EB_API     = "https://api.enablebanking.com"
 TRANSFER_MATCH_WINDOW_DAYS = 3
+ACTUAL_TIMEOUT_SECONDS = 180
+ACTUAL_RETRY_DELAYS_SECONDS = (15, 60)
 
 def _config_flag(name, default=True):
     raw = getattr(config, name, None)
     if raw in (None, ""):
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+def _actual_kwargs():
+    return {
+        "base_url": config.ACTUAL_URL,
+        "password": config.ACTUAL_PASSWORD,
+        "encryption_password": config.ACTUAL_ENCRYPTION_PASSWORD or None,
+        "file": config.ACTUAL_SYNC_ID,
+        "data_dir": "/data/actual-cache",
+        "timeout": ACTUAL_TIMEOUT_SECONDS,
+    }
+
+def _is_transient_actual_error(exc):
+    parts = []
+    current = exc
+    seen = set()
+    while current and id(current) not in seen:
+        seen.add(id(current))
+        parts.append(f"{type(current).__name__} {current}")
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    text = " ".join(parts).lower()
+    return any(
+        marker in text
+        for marker in (
+            "timeout",
+            "timed out",
+            "connection reset",
+            "temporarily unavailable",
+            "remote protocol error",
+        )
+    )
+
+def _run_actual_with_retries(label, operation):
+    attempts = len(ACTUAL_RETRY_DELAYS_SECONDS) + 1
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except Exception as e:
+            if attempt >= len(ACTUAL_RETRY_DELAYS_SECONDS) or not _is_transient_actual_error(e):
+                raise
+            wait = ACTUAL_RETRY_DELAYS_SECONDS[attempt]
+            log.warning(
+                "%s: Actual Budget connection failed transiently (%s). Retrying in %ds (%d/%d).",
+                label,
+                e,
+                wait,
+                attempt + 2,
+                attempts,
+            )
+            time.sleep(wait)
 
 def _own_names():
     val = config.ACCOUNT_HOLDER_NAME or ""
@@ -470,13 +521,11 @@ def _sync_balance_account(account):
         log.error(msg)
         return False, 0, msg
 
-    try:
+    def write_balance_to_actual():
         from actual import Actual
         from actual.queries import get_or_create_account, get_transactions, create_transaction
 
-        with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
-                    encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
-                    file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
+        with Actual(**_actual_kwargs()) as actual:
             account_obj = get_or_create_account(actual.session, actual_name)
             # actualpy amounts are in whole currency units (e.g. 69.15 = €69.15)
             target_amount = float(target_balance)
@@ -504,7 +553,10 @@ def _sync_balance_account(account):
 
             actual.commit()
             log.info("Balance sync %s: set to %s EUR", bank_label, target_amount)
+            return tx_count
 
+    try:
+        tx_count = _run_actual_with_retries(bank_label, write_balance_to_actual)
     except Exception as e:
         msg = f"{bank_label}: Could not connect to Actual Budget: {e}"
         log.error(msg)
@@ -566,16 +618,17 @@ def _sync_account(account, state):
         state["accounts"][account_id] = acct_state
         return True, 0, "OK"
 
-    imported_refs = set(acct_state.get("imported_refs", []))
-    added = updated = skipped = 0
+    pending_map_start = dict(pending_map)
+    imported_refs_start = set(acct_state.get("imported_refs", []))
 
-    try:
+    def write_transactions_to_actual():
+        pending_map = dict(pending_map_start)
+        imported_refs = set(imported_refs_start)
+        added = updated = skipped = 0
         from actual import Actual
         from actual.queries import get_or_create_account, reconcile_transaction, get_transactions, create_transaction
 
-        with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
-                    encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
-                    file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
+        with Actual(**_actual_kwargs()) as actual:
             account_obj    = get_or_create_account(actual.session, actual_account_name)
             existing       = list(get_transactions(actual.session, account=account_obj))
             existing_ids   = {str(t.id) for t in existing}
@@ -678,7 +731,13 @@ def _sync_account(account, state):
 
             actual.commit()
             log.info("Done %s: %d added, %d confirmed, %d skipped", bank_label, added, updated, skipped)
+            return pending_map, imported_refs, added, updated
 
+    try:
+        pending_map, imported_refs, added, updated = _run_actual_with_retries(
+            bank_label,
+            write_transactions_to_actual,
+        )
     except Exception as e:
         msg = f"{bank_label}: Could not connect to Actual Budget at {config.ACTUAL_URL}. Error: {e}"
         log.error(msg)
@@ -772,17 +831,23 @@ def run():
 
     linked_transfers = 0
     if not errors:
-        try:
+        def link_internal_transfers():
             from actual import Actual
-            with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
-                        encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
-                        file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
-                linked_transfers = _auto_link_internal_transfers(actual, all_accounts)
-                if linked_transfers:
+            with Actual(**_actual_kwargs()) as actual:
+                linked = _auto_link_internal_transfers(actual, all_accounts)
+                if linked:
                     actual.commit()
-                    successes.append(
-                        f"Internal transfers: {linked_transfers} linked"
-                    )
+                return linked
+
+        try:
+            linked_transfers = _run_actual_with_retries(
+                "Internal transfers",
+                link_internal_transfers,
+            )
+            if linked_transfers:
+                successes.append(
+                    f"Internal transfers: {linked_transfers} linked"
+                )
         except Exception as e:
             log.error("Error auto-linking internal transfers: %s", e)
 

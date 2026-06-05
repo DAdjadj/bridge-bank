@@ -1,5 +1,7 @@
 import unittest
+from unittest.mock import patch
 
+from app import sync
 from app.sync import _record_reconciled_transaction
 
 
@@ -48,6 +50,40 @@ class SyncCountingTest(unittest.TestCase):
         self.assertEqual(result, "skipped")
         self.assertEqual(recorded, [])
         self.assertEqual(txn.changed_calls, 1)
+
+
+class ActualRetryTest(unittest.TestCase):
+    def test_retries_transient_timeout(self):
+        calls = []
+
+        def operation():
+            calls.append("call")
+            if len(calls) == 1:
+                raise TimeoutError("The read operation timed out")
+            return "ok"
+
+        with patch.object(sync, "ACTUAL_RETRY_DELAYS_SECONDS", (0,)), \
+             patch.object(sync.time, "sleep") as sleep:
+            result = sync._run_actual_with_retries("Actual", operation)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once_with(0)
+
+    def test_does_not_retry_non_transient_error(self):
+        calls = []
+
+        def operation():
+            calls.append("call")
+            raise ValueError("bad configuration")
+
+        with patch.object(sync, "ACTUAL_RETRY_DELAYS_SECONDS", (0,)), \
+             patch.object(sync.time, "sleep") as sleep:
+            with self.assertRaises(ValueError):
+                sync._run_actual_with_retries("Actual", operation)
+
+        self.assertEqual(len(calls), 1)
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":
