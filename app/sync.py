@@ -925,7 +925,10 @@ def run():
             db.log_sync("failure", tx_count=0, message=f"{bank_label}: {e}")
 
     linked_transfers = 0
-    if not errors:
+    # Run transfer-linking whenever at least one account synced successfully
+    # (i.e. Actual is reachable). A single failing or timed-out account must
+    # never disable internal-transfer linking for all the healthy accounts.
+    if successes:
         def link_internal_transfers():
             with _actual_client("Internal transfers") as actual:
                 with _actual_phase("Internal transfers", "scan and link transfers"):

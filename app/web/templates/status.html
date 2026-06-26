@@ -31,6 +31,16 @@
   <div class="alert alert-warn">A bank connection expires in {{ days_left }} day{{ 's' if days_left != 1 else '' }}. <a href="/bank" style="color:inherit;font-weight:600;">Manage banks &rarr;</a></div>
 {% endif %}
 
+{% if last_run_failures %}
+  <div class="alert alert-error">
+    <strong>Some accounts could not sync on the last run.</strong> They will keep failing until fixed (a bank often just needs re-authorising):
+    <ul style="margin:8px 0 6px;padding-left:18px;">
+      {% for m in last_run_failures %}<li style="margin-bottom:2px;">{{ m }}</li>{% endfor %}
+    </ul>
+    <a href="/bank" style="color:inherit;font-weight:600;">Manage banks &rarr;</a>
+  </div>
+{% endif %}
+
 {% if show_review_prompt %}
 <div class="card" style="border-color:#3b82f6; border-width:1px;">
   <div class="card-title" style="margin-bottom:0.25rem;">How's Bridge Bank working for you?</div>

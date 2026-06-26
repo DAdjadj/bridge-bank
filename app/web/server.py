@@ -979,6 +979,30 @@ def status():
     if not val.get("valid") and not val.get("offline"):
         license_sync_failed = True
 
+    # Accounts that failed on the most recent sync cycle (shown as a banner).
+    # A scheduled cycle spans ~1-2 min, so group everything within 10 min of
+    # the newest entry as "the last run" and surface its distinct failures.
+    last_run_failures = []
+    recent_for_failures = db.get_recent_syncs(limit=50)
+    if recent_for_failures:
+        from datetime import datetime as _dt
+        try:
+            newest = _dt.fromisoformat(recent_for_failures[0]["ran_at"])
+        except Exception:
+            newest = None
+        seen_msgs = set()
+        for r in recent_for_failures:
+            try:
+                t = _dt.fromisoformat(r["ran_at"])
+            except Exception:
+                continue
+            if newest is not None and (newest - t).total_seconds() > 600:
+                break
+            msg = (r.get("message") or "").strip()
+            if r["status"] == "failure" and msg and msg not in seen_msgs:
+                seen_msgs.add(msg)
+                last_run_failures.append(msg)
+
     # Fun stats
     import random
     all_syncs = db.get_recent_syncs(limit=9999)
@@ -1053,6 +1077,7 @@ def status():
         trial_expires_at=act_info.get("expires_at", "")[:10] if act_info.get("expires_at") else None,
         license_sync_failed=license_sync_failed,
         license_limit_reached=(license_sync_failed and act_info["usage"] >= act_info["limit"] and act_info["limit"] > 0),
+        last_run_failures=last_run_failures,
         bank_seat_error=bank_seat_error,
         bank_seat_usage=(bank_seat_result or {}).get("used", act_info.get("bank_seat_usage", 0)),
         bank_account_limit=(bank_seat_result or {}).get("limit", act_info.get("bank_account_limit", 2)),
