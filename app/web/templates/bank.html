@@ -63,7 +63,13 @@
     <div style="margin-bottom:0.75rem;padding:12px 14px;border:1px solid #253450;border-radius:8px;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div>
+          {% if a.needs_reauth %}
+          <div class="connected-pill" style="background:rgba(239,68,68,0.12);color:#f87171;border-color:rgba(239,68,68,0.4);">Needs re-authorisation</div>
+          {% elif a.sync_failed %}
+          <div class="connected-pill" style="background:rgba(245,158,11,0.12);color:#fbbf24;border-color:rgba(245,158,11,0.4);">Last sync failed</div>
+          {% else %}
           <div class="connected-pill">Connected</div>
+          {% endif %}
           <div style="margin-top:8px;font-size:12px;color:#94a3b8;">
             {% if a.sync_mode == 'balance' %}
             {{ loop.index }}. {{ a.bank_name }} &rarr; {{ a.actual_account }} <span style="font-size:10px;color:#4a5568;margin-left:4px;">balance only</span>
@@ -97,7 +103,7 @@
           <input type="hidden" name="account_id" value="{{ a.id }}">
           <input type="hidden" name="bank_name" value="{{ a.bank_name }}">
           <input type="hidden" name="bank_country" value="{{ a.bank_country }}">
-          <button type="submit" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:11px;text-decoration:underline;">Re-authorise</button>
+          <button type="submit" style="background:none;border:none;cursor:pointer;font-size:11px;text-decoration:underline;{% if a.needs_reauth %}color:#f87171;font-weight:600;{% else %}color:#94a3b8;{% endif %}">Re-authorise{% if a.needs_reauth %} now{% endif %}</button>
         </form>
       </div>
       {% endif %}

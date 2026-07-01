@@ -844,6 +844,17 @@ def _sync_account(account, state):
     state["accounts"][account_id] = acct_state
     return True, added + updated, "OK"
 
+def bank_label(account):
+    """Human label for an account, used in sync-log messages and the UI.
+
+    Kept in one place so log messages and per-account status matching cannot
+    drift apart.
+    """
+    actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
+    if account.get("sync_mode") == "balance":
+        return f"{account.get('bank_name', account.get('provider', 'Unknown'))} → {actual_name}"
+    return f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) → {actual_name}"
+
 def run():
     log.info("Starting sync...")
 
@@ -905,24 +916,20 @@ def run():
     for i, account in enumerate(all_accounts):
         if i > 0:
             time.sleep(2)
-        actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
-        if account.get("sync_mode") == "balance":
-            bank_label = f"{account.get('bank_name', account.get('provider', 'Unknown'))} \u2192 {actual_name}"
-        else:
-            bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
+        label = bank_label(account)
         try:
             success, added, msg = _sync_account(account, state)
             if success:
                 total_added += added
-                successes.append(f"{bank_label}: {added} transactions")
-                db.log_sync("success", tx_count=added, message=bank_label)
+                successes.append(f"{label}: {added} transactions")
+                db.log_sync("success", tx_count=added, message=label)
             else:
                 errors.append(msg)
                 db.log_sync("failure", tx_count=0, message=msg)
         except Exception as e:
-            log.error("Unexpected error syncing %s: %s", bank_label, e)
-            errors.append(f"{bank_label}: {e}")
-            db.log_sync("failure", tx_count=0, message=f"{bank_label}: {e}")
+            log.error("Unexpected error syncing %s: %s", label, e)
+            errors.append(f"{label}: {e}")
+            db.log_sync("failure", tx_count=0, message=f"{label}: {e}")
 
     linked_transfers = 0
     # Run transfer-linking whenever at least one account synced successfully

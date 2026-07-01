@@ -771,6 +771,15 @@ def bank():
     from ..providers import get_all_providers
     balance_providers = get_all_providers()
 
+    # Flag accounts that failed on the last sync cycle so each card can show a
+    # "Needs re-authorisation" state instead of a blanket "Connected".
+    failure_messages = _last_run_failure_messages()
+    for a in all_accounts:
+        label = sync.bank_label(a)
+        matched = next((m for m in failure_messages if m.startswith(label + ":") or m == label), None)
+        a["sync_failed"] = bool(matched)
+        a["needs_reauth"] = bool(matched) and "re-authorise" in matched.lower()
+
     return render_template("bank.html",
         error=error,
         success=success,
@@ -958,6 +967,36 @@ def pick_account_post():
 # Status
 # ---------------------------------------------------------------------------
 
+def _last_run_failure_messages(window_seconds=600):
+    """Distinct failure messages from the most recent sync cycle.
+
+    A scheduled cycle spans ~1-2 min, so everything within `window_seconds` of
+    the newest log entry is treated as "the last run". Used for both the status
+    banner and per-account status on the Bank page.
+    """
+    from datetime import datetime as _dt
+    recent = db.get_recent_syncs(limit=50)
+    if not recent:
+        return []
+    try:
+        newest = _dt.fromisoformat(recent[0]["ran_at"])
+    except Exception:
+        newest = None
+    failures = []
+    seen = set()
+    for r in recent:
+        try:
+            t = _dt.fromisoformat(r["ran_at"])
+        except Exception:
+            continue
+        if newest is not None and (newest - t).total_seconds() > window_seconds:
+            break
+        msg = (r.get("message") or "").strip()
+        if r["status"] == "failure" and msg and msg not in seen:
+            seen.add(msg)
+            failures.append(msg)
+    return failures
+
 @app.route("/status")
 def status():
     if not config.is_configured():
@@ -980,28 +1019,7 @@ def status():
         license_sync_failed = True
 
     # Accounts that failed on the most recent sync cycle (shown as a banner).
-    # A scheduled cycle spans ~1-2 min, so group everything within 10 min of
-    # the newest entry as "the last run" and surface its distinct failures.
-    last_run_failures = []
-    recent_for_failures = db.get_recent_syncs(limit=50)
-    if recent_for_failures:
-        from datetime import datetime as _dt
-        try:
-            newest = _dt.fromisoformat(recent_for_failures[0]["ran_at"])
-        except Exception:
-            newest = None
-        seen_msgs = set()
-        for r in recent_for_failures:
-            try:
-                t = _dt.fromisoformat(r["ran_at"])
-            except Exception:
-                continue
-            if newest is not None and (newest - t).total_seconds() > 600:
-                break
-            msg = (r.get("message") or "").strip()
-            if r["status"] == "failure" and msg and msg not in seen_msgs:
-                seen_msgs.add(msg)
-                last_run_failures.append(msg)
+    last_run_failures = _last_run_failure_messages()
 
     # Fun stats
     import random
