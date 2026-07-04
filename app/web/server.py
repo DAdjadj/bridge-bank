@@ -1308,12 +1308,19 @@ def api_logs():
 @app.route("/update/check", methods=["GET"])
 def update_check():
     import subprocess, os
+    from .. import version_check
+    repo = IMAGE_NAME.split(":")[0]
+    tag = IMAGE_NAME.split(":")[1] if ":" in IMAGE_NAME else "latest"
+
+    # Version-tag comparison via Docker Hub — needs no docker socket. This is
+    # the safety net for installs where the socket mount is broken or missing:
+    # they used to get a false "up to date" here and stayed stale forever.
+    version_available, latest = version_check.update_available_by_version(APP_VERSION, repo)
+
     if not os.path.exists("/var/run/docker.sock"):
-        return jsonify({"available": False})
+        return jsonify({"available": version_available, "current": APP_VERSION, "latest": latest})
     try:
         import requests as _req
-        repo = IMAGE_NAME.split(":")[0]
-        tag = IMAGE_NAME.split(":")[1] if ":" in IMAGE_NAME else "latest"
         token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
         token = token_resp.json().get("token", "")
         remote_digests = _remote_image_digests(repo, tag, token)
@@ -1331,19 +1338,20 @@ def update_check():
         local_image_id = pulled_image_id.stdout.strip() if pulled_image_id.returncode == 0 else ""
         container_outdated = bool(running_image_id and local_image_id and running_image_id != local_image_id)
         image_outdated = bool(remote_digests and local_digests and remote_digests.isdisjoint(local_digests))
-        available = image_outdated or container_outdated
+        available = image_outdated or container_outdated or version_available
         logger.info(
-            "Update check: remote=%s local=%s container=%s pulled=%s available=%s",
+            "Update check: remote=%s local=%s container=%s pulled=%s version_available=%s available=%s",
             ",".join(sorted(remote_digests))[:40],
             ",".join(sorted(local_digests))[:40],
             running_image_id[:20],
             local_image_id[:20],
+            version_available,
             available,
         )
-        return jsonify({"available": available})
+        return jsonify({"available": available, "current": APP_VERSION, "latest": latest})
     except Exception as e:
         logger.warning("Update check failed: %s", e)
-        return jsonify({"available": False})
+        return jsonify({"available": version_available, "current": APP_VERSION, "latest": latest})
 
 @app.route("/update/run", methods=["POST"])
 def update_run():
@@ -1364,7 +1372,8 @@ def update_run():
     # Fallback: pull image and spawn a helper container to run docker compose
     import subprocess, os, json as _json
     if not os.path.exists("/var/run/docker.sock"):
-        return jsonify({"error": "Docker socket not mounted."}), 400
+        return jsonify({"error": "Could not update automatically (no docker socket). "
+                        "On your server, run: docker compose pull && docker compose up -d"}), 400
     try:
         subprocess.run(["docker", "pull", IMAGE_NAME], capture_output=True, text=True, timeout=120)
         mounts_json = subprocess.run(

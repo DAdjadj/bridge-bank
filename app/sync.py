@@ -978,10 +978,18 @@ def run():
 def _check_for_update():
     """Check Docker Hub for a newer image and store result in DB."""
     import json, platform, subprocess, os, requests as _req
-    if not os.path.exists("/var/run/docker.sock"):
-        return
     repo = "daalves/bridge-bank"
     tag = "latest"
+    if not os.path.exists("/var/run/docker.sock"):
+        # No docker socket: can't compare image digests, but a version-tag
+        # comparison via Docker Hub still detects new releases.
+        from . import version_check
+        available, _ = version_check.update_available_by_version(
+            os.environ.get("APP_VERSION", "dev"), repo)
+        db.set_setting("update_available", "1" if available else "0")
+        if available:
+            log.info("Update available for %s (version tag check)", repo)
+        return
     token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
     token = token_resp.json().get("token", "")
 
