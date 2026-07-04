@@ -538,7 +538,15 @@ def health():
     if expiring:
         checks["sessions_expiring_soon"] = expiring
 
-    # Scheduler check
+    # Scheduler check — revive the loop thread if it somehow died
+    from .. import scheduler as _scheduler
+    freq = int(getattr(config, "SYNC_FREQUENCY", "24") or "24")
+    if freq > 0 and config.is_configured() and not _scheduler.is_alive():
+        logger.warning("Scheduler thread not running; restarting it")
+        _start_scheduler_if_ready()
+        status = "degraded" if status == "ok" else status
+        checks["scheduler_restarted"] = True
+    checks["scheduler_alive"] = _scheduler.is_alive()
     checks["scheduler_jobs"] = len(_sched.get_jobs())
 
     code = 200 if status == "ok" else (200 if status == "degraded" else 503)
@@ -1246,25 +1254,46 @@ def _sanitize_logs(text):
     text = re.sub(r"\[?\{'account_id':.*?\}\]?", '[account data redacted]', text)
     return text
 
+LOG_FILE = "/data/bridge-bank.log"
+
+def _tail_log_file(max_lines):
+    """Return the last max_lines lines from the app log file (including the
+    previous rotation if the current file is short). None if no file exists."""
+    chunks = []
+    for path in (LOG_FILE + ".1", LOG_FILE):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                chunks.append(f.read())
+        except OSError:
+            continue
+    if not chunks:
+        return None
+    all_lines = "".join(chunks).splitlines()
+    return "\n".join(all_lines[-max_lines:]) + "\n"
+
 @app.route("/api/logs")
 def api_logs():
-    """Return recent application logs for debugging."""
-    import subprocess
-    lines = request.args.get("lines", "200")
+    """Return recent application logs for debugging.
+
+    Reads the rotating log file written by main.py. Falls back to the docker
+    CLI only for installs still running an image from before file logging
+    existed (the old approach needed a mounted docker socket and broke
+    without one)."""
     try:
-        result = subprocess.run(
-            ["docker", "logs", "--tail", lines, CONTAINER_NAME],
-            capture_output=True, text=True, timeout=10
-        )
-        # docker logs sends output to stderr
-        output = result.stdout + result.stderr
-        output = _sanitize_logs(output)
-        # Get container image ID as version identifier
-        version = subprocess.run(
-            ["docker", "inspect", "--format", "{{.Image}}", CONTAINER_NAME],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip()[:19].replace("sha256:", "")
-        return jsonify({"logs": output, "version": version})
+        lines = int(request.args.get("lines", "200"))
+    except ValueError:
+        lines = 200
+    try:
+        output = _tail_log_file(lines)
+        if output is None:
+            import subprocess
+            result = subprocess.run(
+                ["docker", "logs", "--tail", str(lines), CONTAINER_NAME],
+                capture_output=True, text=True, timeout=10
+            )
+            # docker logs sends output to stderr
+            output = result.stdout + result.stderr
+        return jsonify({"logs": _sanitize_logs(output), "version": APP_VERSION})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
