@@ -4,7 +4,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from . import config, db, sync
+from . import config, db, sync, email_notify
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,21 @@ def _should_catchup(frequency_hours) -> bool:
 
 def _run_sync():
     logger.info("Scheduled sync triggered at %s", datetime.now().isoformat())
-    sync.run()
+    try:
+        sync.run()
+    except Exception as e:
+        # sync.run() handles its own errors and emails; this only catches
+        # unexpected crashes. Without it, the exception would propagate into
+        # schedule.run_pending() and kill the scheduler loop thread silently.
+        logger.exception("Scheduled sync crashed unexpectedly")
+        try:
+            db.log_sync("failure", message=f"Unexpected error: {e}")
+        except Exception:
+            pass
+        try:
+            email_notify.send_failure(f"Unexpected error during scheduled sync: {e}")
+        except Exception:
+            logger.exception("Could not send failure notification email")
 
 def _parse_time(time_str):
     """Parse HH:MM string into hours and minutes."""
@@ -53,10 +67,15 @@ def _local_times_to_utc(sync_time_str, frequency, tz_name):
 
     return utc_times
 
-_started = False
+_loop_thread = None
+_start_lock = threading.Lock()
+
+def is_alive() -> bool:
+    """True if the scheduler loop thread is running."""
+    return _loop_thread is not None and _loop_thread.is_alive()
 
 def start():
-    global _started
+    global _loop_thread
     sync_time = config.SYNC_TIME or "06:00"
     frequency = int(getattr(config, 'SYNC_FREQUENCY', '24') or '24')
     tz_name = getattr(config, 'TIMEZONE', '') or ''
@@ -86,15 +105,21 @@ def start():
 
     if _should_catchup(frequency):
         logger.info("Catch-up sync needed. Running now.")
-        threading.Thread(target=sync.run, daemon=True).start()
+        threading.Thread(target=_run_sync, daemon=True).start()
 
-    # Only start the loop thread once
-    if not _started:
-        _started = True
-        def loop():
-            while True:
-                schedule.run_pending()
-                time.sleep(60)
-        threading.Thread(target=loop, daemon=True).start()
+    # Start the loop thread, or revive it if it died. Checking is_alive()
+    # (instead of a start-once flag) means saving settings from the UI can
+    # bring a dead scheduler back without a container restart.
+    with _start_lock:
+        if not is_alive():
+            def loop():
+                while True:
+                    try:
+                        schedule.run_pending()
+                    except Exception:
+                        logger.exception("Scheduler loop error; continuing")
+                    time.sleep(60)
+            _loop_thread = threading.Thread(target=loop, daemon=True)
+            _loop_thread.start()
 
     logger.info("Scheduler running.")
