@@ -267,10 +267,14 @@ async function runUpdate() {
     const check = await fetch('/update/check');
     const checkData = await check.json();
     if (!checkData.available) {
-      status.textContent = 'Already up to date.';
+      // latest is null when the check itself failed (e.g. no network) —
+      // don't claim "up to date" in that case.
+      status.textContent = checkData.latest
+        ? 'Already up to date (v' + checkData.latest + ').'
+        : 'Could not check for updates. Please try again later.';
       btn.textContent = 'Check for updates';
       btn.disabled = false;
-      setTimeout(function() { status.style.display = 'none'; }, 3000);
+      setTimeout(function() { status.style.display = 'none'; }, 5000);
       return;
     }
     status.textContent = 'Update found. Installing...';
