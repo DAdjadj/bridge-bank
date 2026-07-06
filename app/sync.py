@@ -889,6 +889,13 @@ def run():
 
     all_accounts = db.get_all_bank_accounts()
     if not all_accounts:
+        # Still report the (empty) seat list so the license server releases
+        # this machine's seats; otherwise removing every bank leaves stale
+        # seats registered until a new connection attempt.
+        try:
+            licence.sync_bank_seats([])
+        except Exception:
+            pass
         msg = "No bank connection found. Please connect your bank."
         log.error(msg)
         db.log_sync("failure", message=msg)
