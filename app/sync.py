@@ -322,6 +322,64 @@ def _patch_payee_name_rules(session):
             if patched:
                 setattr(rule, attr, json.dumps(items))
 
+_action_run_patched = False
+
+def _patch_action_note_casing():
+    """Stop actualpy from lowercasing note values written by rules.
+
+    actualpy's Action.run passes SET values through get_normalized_string()
+    (lowercase + NFD), which is meant for condition comparisons only. The
+    result: a rule that sets notes to '#Transferência' writes
+    '#transferência', on the main transaction and on every split. The real
+    Actual rule engine keeps the original casing. Patch SET actions on
+    string fields to write the raw value; everything else falls through to
+    the original implementation. Upstream: bvanelli/actualpy."""
+    global _action_run_patched
+    if _action_run_patched:
+        return
+    from actual import rules as _rules
+    _orig_run = _rules.Action.run
+
+    def _patched_run(self, transaction):
+        if (self.op == _rules.ActionType.SET
+                and self.type == _rules.ValueType.STRING
+                and isinstance(self.value, str)):
+            split_index = self.get_split_index()
+            if split_index and len(transaction.splits) >= split_index:
+                transaction = transaction.splits[split_index - 1]
+            attr = _rules.get_attribute_by_table_name(
+                str(_rules.Transactions.__tablename__), str(self.field))
+            setattr(transaction, attr, self.value)
+            return
+        return _orig_run(self, transaction)
+
+    _rules.Action.run = _patched_run
+    _action_run_patched = True
+
+def _run_rules_on_transfer_counterparts(actual, new_txn):
+    """Run rules on the mirrored side of transfers created by this import.
+
+    Only imported transactions go through run_rules, so rules that target
+    the counterpart row (e.g. account is 'Savings' -> set notes) never fire
+    automatically; the user has to select the transaction and click
+    'Run Rules' by hand. Collect the counterparts of any new transfers and
+    give them the same rule pass."""
+    from actual.database import Transactions
+    new_ids = {getattr(t, "id", None) for t in new_txn}
+    counterparts = []
+    for txn in new_txn:
+        transfer_id = _txn_transfer_id(txn)
+        if not transfer_id or transfer_id in new_ids:
+            continue
+        counterpart = actual.session.get(Transactions, transfer_id)
+        if counterpart is not None:
+            counterparts.append(counterpart)
+    if not counterparts:
+        return
+    log.info("Applying rules to %d transfer counterpart(s)", len(counterparts))
+    actual.run_rules(counterparts)
+    _fix_rule_note_casing(actual.session, counterparts)
+
 def _fix_rule_note_casing(session, transactions):
     """Restore original case for notes set by rules.
 
@@ -818,8 +876,10 @@ def _sync_account(account, state):
             try:
                 with _actual_phase(bank_label, "apply Actual rules"):
                     _patch_payee_name_rules(actual.session)
+                    _patch_action_note_casing()
                     actual.run_rules(new_txn)
                     _fix_rule_note_casing(actual.session, new_txn)
+                    _run_rules_on_transfer_counterparts(actual, new_txn)
             except Exception as e:
                 log.error("Error applying rules: %s", e)
 
