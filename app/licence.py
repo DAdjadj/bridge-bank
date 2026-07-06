@@ -214,12 +214,14 @@ def claim_bank_seat(account, key=None):
                 "ok": True,
                 "used": data.get("used"),
                 "limit": data.get("limit"),
+                "other_machine_seats": data.get("other_machine_seats", 0),
             }
         return {
             "ok": False,
             "error": data.get("error") or "Could not reserve a bank slot for this licence.",
             "used": data.get("used"),
             "limit": data.get("limit"),
+            "other_machine_seats": data.get("other_machine_seats", 0),
         }
     except requests.RequestException as e:
         logger.warning("Bank seat claim failed (network): %s", e)
@@ -251,17 +253,57 @@ def sync_bank_seats(accounts, key=None):
                 "ok": True,
                 "used": data.get("used"),
                 "limit": data.get("limit"),
+                "other_machine_seats": data.get("other_machine_seats", 0),
             }
         return {
             "ok": False,
             "error": data.get("error") or "Could not verify bank slots for this licence.",
             "used": data.get("used"),
             "limit": data.get("limit"),
+            "other_machine_seats": data.get("other_machine_seats", 0),
         }
     except requests.RequestException as e:
         logger.warning("Bank seat sync failed (network): %s", e)
         return {
             "ok": False,
             "error": "Could not reach the license server to verify connected bank slots.",
+            "network": True,
+        }
+
+def deactivate_other_machines(key=None):
+    """Remove activations and bank seats held by previous installations.
+
+    Recovers licences whose seats got stranded under an old machine
+    fingerprint (reinstall, wiped data folder, moved server) — those seats
+    block new bank connections and no other code path can release them."""
+    from . import config
+    key = key or config.LICENCE_KEY
+    if not key:
+        return {"ok": False, "error": "No license key configured."}
+    payload = {
+        "license_key": key,
+        "machine_fingerprint": _get_fingerprint(),
+    }
+    try:
+        resp, data = _post_json("/deactivate-others", payload)
+        if resp.status_code == 200:
+            logger.info("Released %s seat(s) and %s activation(s) from other installations",
+                        data.get("removed_seats"), data.get("removed_activations"))
+            return {
+                "ok": True,
+                "removed_seats": data.get("removed_seats", 0),
+                "removed_activations": data.get("removed_activations", 0),
+                "used": data.get("used"),
+                "limit": data.get("limit"),
+            }
+        return {
+            "ok": False,
+            "error": data.get("error") or "Could not release slots from other installations.",
+        }
+    except requests.RequestException as e:
+        logger.warning("Deactivate-others failed (network): %s", e)
+        return {
+            "ok": False,
+            "error": "Could not reach the license server. Please try again in a moment.",
             "network": True,
         }

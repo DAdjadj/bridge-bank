@@ -17,6 +17,18 @@
 {% if bank_seat_error %}
   <div class="alert alert-error">{{ bank_seat_error }}</div>
 {% endif %}
+{% if other_machine_seats and (bank_seat_error or bank_seat_usage >= bank_account_limit) %}
+  <div class="card" style="border-color:#8a5a2b;">
+    <div class="card-title" style="font-size:15px;">Bank slots held by a previous installation</div>
+    <div class="card-sub">{{ other_machine_seats }} of your bank slot(s) belong to another installation of Bridge Bank (for example one from before a reinstall, an update run from a different folder, or a move to a new server). If that installation is no longer in use, release its slots below and connect your bank again. Only skip this if you are intentionally running Bridge Bank on a second machine.</div>
+    <form method="POST" action="/bank/release-other-machines" onsubmit="return confirm('Release all bank slots held by other installations of this licence? If another Bridge Bank installation is still running somewhere, it will stop syncing.');">
+      <button type="submit" class="btn">Release slots from previous installation</button>
+    </form>
+  </div>
+{% endif %}
+{% if released %}
+  <div class="alert alert-success">Released {{ released }} bank slot(s) from previous installations. You can connect your bank now.</div>
+{% endif %}
 {% if success %}
   <div class="alert alert-success">Bank connected. Your first sync will run shortly.</div>
 {% endif %}

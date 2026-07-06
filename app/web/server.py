@@ -614,7 +614,8 @@ def actual_accounts_api():
 
 @app.route("/bank", methods=["GET", "POST"])
 def bank():
-    error    = None
+    # /callback and other flows redirect here with ?error=<message>
+    error    = request.args.get("error")
     auth_url = None
 
     if request.method == "POST":
@@ -770,11 +771,13 @@ def bank():
     bank_seat_error, bank_seat_result = _get_bank_seat_error(all_accounts)
     days_left    = _get_days_left()
     success      = request.args.get("success")
+    released     = request.args.get("released")
     pem_ready    = bool(db.get_setting("eb_pem_content") or __import__('os').path.exists("/data/private.pem"))
 
     # Fetch bank account limit from licence API
     bank_account_limit = int((bank_seat_result or {}).get("limit") or _get_bank_account_limit())
     bank_seat_usage = int((bank_seat_result or {}).get("used") or len(all_accounts))
+    other_machine_seats = int((bank_seat_result or {}).get("other_machine_seats") or 0)
 
     from ..providers import get_all_providers
     balance_providers = get_all_providers()
@@ -791,6 +794,7 @@ def bank():
     return render_template("bank.html",
         error=error,
         success=success,
+        released=released,
         bank_seat_error=bank_seat_error,
         auth_url=auth_url,
         all_accounts=all_accounts,
@@ -799,11 +803,27 @@ def bank():
         eb_app_id=config.EB_APPLICATION_ID or db.get_setting("eb_app_id"),
         bank_account_limit=bank_account_limit,
         bank_seat_usage=bank_seat_usage,
+        other_machine_seats=other_machine_seats,
         bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="bank",
         balance_providers=balance_providers,
     )
+
+# ---------------------------------------------------------------------------
+# Release slots held by a previous installation
+# ---------------------------------------------------------------------------
+
+@app.route("/bank/release-other-machines", methods=["POST"])
+def release_other_machines():
+    result = licence.deactivate_other_machines()
+    if not result.get("ok"):
+        return redirect(url_for("bank") + "?error=" + (result.get("error") or "Could not release slots."))
+    # Re-sync so the stored seat-limit error clears immediately
+    _sync_bank_seats(db.get_all_bank_accounts())
+    removed = int(result.get("removed_seats") or 0)
+    logger.info("User released %d slot(s) from previous installations", removed)
+    return redirect(url_for("bank", released=removed))
 
 # ---------------------------------------------------------------------------
 # Re-authorise existing bank
@@ -834,6 +854,7 @@ def reauthorise():
     bank_seat_error, bank_seat_result = _get_bank_seat_error(all_accounts)
     bank_account_limit = int((bank_seat_result or {}).get("limit") or _get_bank_account_limit())
     bank_seat_usage = int((bank_seat_result or {}).get("used") or len(all_accounts))
+    other_machine_seats = int((bank_seat_result or {}).get("other_machine_seats") or 0)
 
     from ..providers import get_all_providers
     balance_providers = get_all_providers()
@@ -848,6 +869,7 @@ def reauthorise():
         eb_app_id=config.EB_APPLICATION_ID or db.get_setting("eb_app_id"),
         bank_account_limit=bank_account_limit,
         bank_seat_usage=bank_seat_usage,
+        other_machine_seats=other_machine_seats,
         bank_slot_url=f"https://buy.stripe.com/00waEQ6subzF0PZ9EBcMM05?client_reference_id={config.LICENCE_KEY}",
         today=__import__('datetime').date.today().isoformat(),
         active="bank",
