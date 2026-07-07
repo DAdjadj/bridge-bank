@@ -100,6 +100,7 @@ def _actual_phase(label, phase):
 @contextlib.contextmanager
 def _actual_client(label):
     from actual import Actual
+    _patch_idempotent_migrations()
     actual = Actual(**_actual_kwargs())
     _attach_actual_diagnostics(actual, label)
     try:
@@ -323,6 +324,71 @@ def _patch_payee_name_rules(session):
                 setattr(rule, attr, json.dumps(items))
 
 _action_run_patched = False
+_migrations_patched = False
+
+def _patch_idempotent_migrations():
+    """Tolerate already-applied schema changes when actualpy replays migrations.
+
+    A budget migrated by the Actual web client can carry a schema change whose
+    migration id is not recorded in the budget's __migrations__ table, because
+    an earlier Actual version applied that change under a different id. When
+    actualpy loads the budget it re-runs the server's migration file, and
+    SQLite raises e.g. 'duplicate column name: show_trend_lines'. The whole
+    sync then aborts as 'Could not connect to Actual Budget'. This bites budgets
+    on newer Actual servers (26.x added custom_reports.show_trend_lines) and is
+    not fixed upstream (run_migrations is unchanged across actualpy 0.21-0.22.x).
+
+    Replace Actual.run_migrations with a version that records and skips any
+    migration whose only failure is that the change already exists, and still
+    raises on any other error. Upstream: bvanelli/actualpy run_migrations."""
+    global _migrations_patched
+    if _migrations_patched:
+        return
+    import sqlite3
+    from actual import Actual
+    from actual.database import reflect_model
+    from actual.migrations import js_migration_statements
+
+    def _run_migrations(self, migration_files):
+        data_dir = getattr(self, "data_dir", None) or self._data_dir
+        with sqlite3.connect(data_dir / "db.sqlite") as conn:
+            for file in migration_files:
+                if not file.startswith("migrations"):
+                    continue  # in case db.sqlite is passed as one of the files
+                file_id = file.split("_")[0].split("/")[1]
+                if conn.execute(
+                    "SELECT id FROM __migrations__ WHERE id = ?;", (file_id,)
+                ).fetchall():
+                    continue  # already applied
+                sql_statements = self.data_file(file).decode()
+                if file.endswith(".js"):
+                    sql_statements = "\n".join(js_migration_statements(sql_statements))
+                try:
+                    conn.executescript(sql_statements)
+                except sqlite3.OperationalError as e:
+                    text = str(e).lower()
+                    if "duplicate column name" in text or "already exists" in text:
+                        # the schema change is already present; drop the failed
+                        # migration's open transaction and just record it as done
+                        log.warning(
+                            "Actual migration %s already applied to the budget schema "
+                            "(%s); recording it as done and continuing.", file_id, e
+                        )
+                        conn.rollback()
+                    else:
+                        raise
+                conn.execute("INSERT INTO __migrations__ (id) VALUES (?);", (file_id,))
+            conn.commit()
+        conn.close()
+        # refresh the reflected model, as upstream run_migrations does
+        metadata = reflect_model(self.engine)
+        if hasattr(self, "_database_metadata"):
+            self._database_metadata = metadata
+        else:
+            self._meta = metadata
+
+    Actual.run_migrations = _run_migrations
+    _migrations_patched = True
 
 def _patch_action_note_casing():
     """Stop actualpy from lowercasing note values written by rules.
