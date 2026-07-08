@@ -51,17 +51,38 @@ def _make_headers():
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 def start_auth(bank_name: str, bank_country: str, psu_type: str = "") -> dict:
+    from . import relay
     valid_until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 180 * 24 * 3600))
     state_val   = str(uuid.uuid4())
+    # The "auth2" prefix tells the bridgebank.app callback page this instance
+    # can complete the auth through the relay, so the page can encrypt and
+    # deliver the code instead of relying only on the browser redirect. With
+    # the relay disabled we keep the legacy prefix and the page behaves as it
+    # always did. The state_id must stay the LAST |-segment (complete_auth and
+    # the callback page both extract it that way).
+    prefix = "bridge-bank-auth2" if relay.relay_enabled() else "bridge-bank-auth"
     body = {
         "access":       {"valid_until": valid_until},
         "aspsp":        {"name": bank_name, "country": bank_country},
-        "state":        f"bridge-bank-auth|{config.BRIDGE_BANK_URL or "http://localhost:3002"}|{state_val}",
+        "state":        f"{prefix}|{config.BRIDGE_BANK_URL or "http://localhost:3002"}|{state_val}",
         "redirect_url": "https://bridgebank.app/callback",
         "psu_type":     psu_type or config.EB_PSU_TYPE,
     }
     db.set_setting("pending_session_state", state_val)
     db.set_setting("pending_session_valid_until", valid_until)
+    db.set_setting("pending_session_started_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
+    db.set_setting("auth_flow_state_id", state_val)
+    db.set_setting("auth_flow_status", "pending")
+    db.set_setting("auth_flow_outcome", "")
+    db.set_setting("auth_flow_message", "")
+    db.set_setting("auth_relay_note", "")
+    if relay.relay_enabled():
+        priv_pem, pubkey = relay.generate_keypair()
+        db.set_setting("pending_relay_privkey", priv_pem)
+        db.set_setting("pending_relay_pubkey", pubkey)
+    else:
+        db.set_setting("pending_relay_privkey", "")
+        db.set_setting("pending_relay_pubkey", "")
     logger.info("Starting auth for %s (%s) with psu_type=%s", bank_name, bank_country, body["psu_type"])
     r = requests.post(f"{EB_API}/auth", json=body, headers=_make_headers())
     r.raise_for_status()

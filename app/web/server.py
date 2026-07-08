@@ -577,6 +577,18 @@ def api_timezone():
 def bank_status():
     return jsonify({"connected": db.get_bank_account_count() > 0})
 
+@app.route("/api/auth-progress")
+def api_auth_progress():
+    """Live state of the current bank auth attempt, polled by the bank page
+    so the tab left behind flips when the relay (or the browser) finishes."""
+    return jsonify({
+        "status":  db.get_setting("auth_flow_status"),
+        "outcome": db.get_setting("auth_flow_outcome"),
+        "message": db.get_setting("auth_flow_message"),
+        "note":    db.get_setting("auth_relay_note"),
+        "picker_pending": bool(db.get_setting("pending_auth_accounts")),
+    })
+
 @app.route("/api/detect-url")
 def detect_url():
     scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
@@ -674,15 +686,20 @@ def bank():
                     db.set_setting("pending_bank_name", bank_name)
                     db.set_setting("pending_bank_country", bank_country)
                     db.set_setting("pending_start_sync_date", start_sync_date)
+                    # A fresh attempt invalidates any leftover picker state from
+                    # an earlier, abandoned auth.
+                    for key in ["pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until"]:
+                        db.set_setting(key, "")
                     try:
                         # Update BRIDGE_BANK_URL from current request so the OAuth
                         # callback redirects back through the same scheme (HTTPS via Caddy)
                         scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
                         host   = request.headers.get("X-Forwarded-Host", request.host)
                         config.set("BRIDGE_BANK_URL", f"{scheme}://{host}")
-                        from .. import enablebanking
+                        from .. import enablebanking, relay
                         result   = enablebanking.start_auth(bank_name, bank_country, psu_type=psu_type)
                         auth_url = result["url"]
+                        relay.launch(_relay_complete)
                     except Exception as e:
                         error = f"Could not start bank connection: {e}"
 
@@ -760,11 +777,13 @@ def bank():
                         return redirect(url_for("bank", success=1))
 
         elif action == "cancel":
-            db.set_setting("pending_session_id", "")
-            db.set_setting("pending_actual_account", "")
-            db.set_setting("pending_bank_name", "")
-            db.set_setting("pending_bank_country", "")
-            db.set_setting("pending_reauth_account_id", "")
+            _mark_auth_cancelled()
+            for key in ["pending_session_id", "pending_actual_account", "pending_bank_name",
+                        "pending_bank_country", "pending_reauth_account_id",
+                        "pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until",
+                        "pending_session_state", "pending_relay_privkey", "pending_relay_pubkey",
+                        "pending_session_started_at", "auth_relay_note"]:
+                db.set_setting(key, "")
             return redirect(url_for("bank"))
 
     all_accounts = db.get_all_bank_accounts()
@@ -796,6 +815,7 @@ def bank():
         success=success,
         released=released,
         bank_seat_error=bank_seat_error,
+        picker_pending=bool(db.get_setting("pending_auth_accounts")),
         auth_url=auth_url,
         all_accounts=all_accounts,
         days_left=days_left,
@@ -836,16 +856,24 @@ def reauthorise():
     bank_country = request.form.get("bank_country", "").strip()
     if not bank_name or not bank_country:
         return redirect(url_for("bank"))
+    # Catch license problems before sending the user to their bank; otherwise
+    # the auth succeeds at the bank and only fails afterwards, invisibly.
+    lic = licence.validate()
+    if not lic.get("valid"):
+        return redirect(url_for("bank") + "?error=" + (lic.get("error") or "Your license could not be validated. Renew it to re-authorise your bank."))
     try:
         db.set_setting("pending_reauth_account_id", account_id)
         db.set_setting("pending_bank_name", bank_name)
         db.set_setting("pending_bank_country", bank_country)
+        for key in ["pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until"]:
+            db.set_setting(key, "")
         scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
         host   = request.headers.get("X-Forwarded-Host", request.host)
         config.set("BRIDGE_BANK_URL", f"{scheme}://{host}")
-        from .. import enablebanking
+        from .. import enablebanking, relay
         result   = enablebanking.start_auth(bank_name, bank_country)
         auth_url = result["url"]
+        relay.launch(_relay_complete)
     except Exception as e:
         logger.error("Failed to start reauth: %s", e)
         return redirect(url_for("bank") + f"?error=Could not start re-authorisation: {e}")
@@ -916,10 +944,94 @@ def _save_bank_account(session_id, account_uid, valid_until):
     # Clear pending settings
     for key in ["pending_actual_account", "pending_bank_name", "pending_bank_country",
                 "pending_start_sync_date", "pending_session_state", "pending_session_valid_until",
-                "pending_reauth_account_id"]:
+                "pending_reauth_account_id", "pending_relay_privkey", "pending_relay_pubkey",
+                "pending_session_started_at", "auth_relay_note"]:
         db.set_setting(key, "")
     _start_scheduler_if_ready()
     threading.Thread(target=sync.run, daemon=True).start()
+
+NO_ACCOUNTS_ERROR = ("Your bank did not return any accounts. This may happen if you declined "
+                     "account access during authorisation, or if the selected account type is not "
+                     "supported by your bank through open banking. Please try again and make sure "
+                     "to approve access to at least one account.")
+
+def _mark_auth_cancelled():
+    if db.compare_and_swap_setting("auth_flow_status", "pending", "in_progress"):
+        db.set_setting("auth_flow_outcome", "cancelled")
+        db.set_setting("auth_flow_message", "Bank connection was cancelled or denied.")
+        db.set_setting("auth_flow_status", "done")
+
+def _complete_auth_from_code(code, state, source="web"):
+    """Single entry point for finishing a bank auth, shared by the browser
+    /callback route and the relay poller. Returns (outcome, message).
+
+    Outcomes: success, picker, error, retryable, in_progress, stale, cancelled.
+    A SQLite compare-and-swap on auth_flow_status guarantees the single-use
+    code is exchanged at most once when the browser redirect and the relay
+    poller race; the loser is routed by the recorded outcome instead of
+    surfacing a false failure. "retryable" means the exchange failed before
+    the code was consumed, so the attempt reverts to pending and another
+    delivery of the same code can still succeed.
+    """
+    state_id = state.split("|")[-1] if state else ""
+    flow_id  = db.get_setting("auth_flow_state_id")
+    if not state_id:
+        return ("stale", "")
+    if state_id != flow_id:
+        # An attempt started before this release has no flow id; adopt it so
+        # in-flight auths keep working across the update.
+        if flow_id or db.get_setting("pending_session_state") != state_id:
+            return ("stale", "")
+        db.set_setting("auth_flow_state_id", state_id)
+        db.set_setting("auth_flow_status", "pending")
+    if db.get_setting("auth_flow_status") == "done":
+        return (db.get_setting("auth_flow_outcome") or "error", db.get_setting("auth_flow_message"))
+    if not db.compare_and_swap_setting("auth_flow_status", "pending", "in_progress"):
+        if db.get_setting("auth_flow_status") == "done":
+            return (db.get_setting("auth_flow_outcome") or "error", db.get_setting("auth_flow_message"))
+        return ("in_progress", "")
+
+    def _finish(outcome, message=""):
+        db.set_setting("auth_flow_outcome", outcome)
+        db.set_setting("auth_flow_message", message)
+        db.set_setting("auth_flow_status", "done")
+        return (outcome, message)
+
+    from .. import enablebanking
+    try:
+        result = enablebanking.complete_auth(code=code, state=state)
+    except Exception as e:
+        # The exchange itself failed, so the code may still be unused. Revert
+        # to pending so the manual browser button or the poller can retry.
+        logger.error("Bank auth exchange failed (%s): %s", source, e)
+        db.set_setting("auth_flow_message", str(e))
+        db.compare_and_swap_setting("auth_flow_status", "in_progress", "pending")
+        return ("retryable", str(e))
+    try:
+        if not result:
+            logger.warning("Auth completion (%s): bank returned no accounts", source)
+            return _finish("error", NO_ACCOUNTS_ERROR)
+        accounts = result["accounts"]
+        logger.info("Auth completed via %s: %d account(s), session=%s", source, len(accounts), result["session_id"])
+        if len(accounts) == 1:
+            account_uid = accounts[0].get("uid") or accounts[0].get("account_uid") or accounts[0].get("resource_id")
+            logger.info("Auto-connecting single account uid=%s", account_uid)
+            _save_bank_account(result["session_id"], account_uid, result.get("valid_until", ""))
+            return _finish("success")
+        import json
+        logger.info("Multiple accounts — account picker required")
+        db.set_setting("pending_auth_session_id", result["session_id"])
+        db.set_setting("pending_auth_accounts", json.dumps(accounts))
+        db.set_setting("pending_auth_valid_until", result.get("valid_until", ""))
+        return _finish("picker")
+    except Exception as e:
+        # The code was consumed by the exchange, so a retry cannot succeed;
+        # record the real failure (for example a seat-limit error).
+        logger.error("Bank auth completion failed after exchange (%s): %s", source, e)
+        return _finish("error", str(e))
+
+def _relay_complete(code, state):
+    return _complete_auth_from_code(code, state, source="relay")
 
 @app.route("/callback")
 def callback():
@@ -928,31 +1040,22 @@ def callback():
     error = request.args.get("error")
     if error or not code:
         logger.warning("Callback received error=%s code=%s", error, bool(code))
+        _mark_auth_cancelled()
         return redirect(url_for("bank") + "?error=Bank connection was cancelled or denied. Please try again.")
-    try:
-        from .. import enablebanking
-        result = enablebanking.complete_auth(code=code, state=state)
-        if result:
-            accounts = result["accounts"]
-            logger.info("Callback: %d account(s) returned, session=%s", len(accounts), result["session_id"])
-            if len(accounts) == 1:
-                account_uid = accounts[0].get("uid") or accounts[0].get("account_uid") or accounts[0].get("resource_id")
-                logger.info("Auto-connecting single account uid=%s", account_uid)
-                _save_bank_account(result["session_id"], account_uid, result.get("valid_until", ""))
-                return redirect(url_for("status"))
-            else:
-                import json
-                logger.info("Multiple accounts — redirecting to account picker")
-                db.set_setting("pending_auth_session_id", result["session_id"])
-                db.set_setting("pending_auth_accounts", json.dumps(accounts))
-                db.set_setting("pending_auth_valid_until", result.get("valid_until", ""))
-                return redirect(url_for("pick_account"))
-        else:
-            logger.warning("Callback: complete_auth returned no accounts")
-            return redirect(url_for("bank") + "?error=Your bank did not return any accounts. This may happen if you declined account access during authorisation, or if the selected account type is not supported by your bank through open banking. Please try again and make sure to approve access to at least one account.")
-    except Exception as e:
-        logger.error("Callback failed: %s", e)
-        return redirect(url_for("bank") + "?error=Bank connection failed: " + str(e) + ". If this keeps happening, please download your logs from the Status page and send them to support@bridgebank.app.")
+    outcome, message = _complete_auth_from_code(code, state, source="web")
+    if outcome == "success":
+        return redirect(url_for("status"))
+    if outcome == "picker":
+        return redirect(url_for("pick_account"))
+    if outcome == "in_progress":
+        # The relay poller is finishing this auth right now; the bank page
+        # shows live progress and flips when it lands.
+        return redirect(url_for("bank"))
+    if outcome == "stale":
+        return redirect(url_for("bank") + "?error=This bank connection link has expired. Please start the connection again.")
+    if outcome == "cancelled":
+        return redirect(url_for("bank") + "?error=Bank connection was cancelled or denied. Please try again.")
+    return redirect(url_for("bank") + "?error=Bank connection failed: " + (message or "unknown error") + ". If this keeps happening, please download your logs from the Status page and send them to support@bridgebank.app.")
 
 @app.route("/pick-account")
 def pick_account():
@@ -1111,6 +1214,7 @@ def status():
     return render_template("status.html",
         syncs=syncs,
         all_accounts=all_accounts,
+        picker_pending=bool(db.get_setting("pending_auth_accounts")),
         days_left=days_left,
         last_sync=last_sync,
         sync_time=config.SYNC_TIME,
@@ -1474,4 +1578,9 @@ def _start_scheduler_if_ready():
 
 def start(host="0.0.0.0", port=3000):
     _start_scheduler_if_ready()
+    try:
+        from .. import relay
+        relay.revive(_relay_complete)
+    except Exception as e:
+        logger.warning("Could not revive auth relay poller: %s", e)
     app.run(host=host, port=port, debug=False, use_reloader=False)

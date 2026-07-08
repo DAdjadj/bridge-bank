@@ -23,6 +23,10 @@
   {% endif %}
 {% endif %}
 
+{% if picker_pending %}
+  <div class="alert alert-warn"><strong>Almost done:</strong> your bank returned several accounts. <a href="/pick-account" style="color:inherit;font-weight:600;">Choose which one to connect &rarr;</a></div>
+{% endif %}
+
 {% if bank_seat_error %}
   <div class="alert alert-error">{{ bank_seat_error }} <a href="/bank" style="color:inherit;font-weight:600;">Manage banks &rarr;</a></div>
 {% endif %}
