@@ -443,8 +443,16 @@ def _run_rules_on_transfer_counterparts(actual, new_txn):
         if not transfer_id or transfer_id in new_ids:
             continue
         counterpart = actual.session.get(Transactions, transfer_id)
-        if counterpart is not None:
-            counterparts.append(counterpart)
+        if counterpart is None:
+            continue
+        # A counterpart created mid-rule-pass copied the origin's notes as
+        # they were at that moment (usually the raw bank narration). The
+        # Actual server mirrors the final notes onto the counterpart after
+        # sync anyway; do it now so rule conditions on the counterpart see
+        # the note the user's rules just wrote (e.g. notes is 'x').
+        if txn.notes and counterpart.notes != txn.notes:
+            counterpart.notes = txn.notes
+        counterparts.append(counterpart)
     if not counterparts:
         return
     log.info("Applying rules to %d transfer counterpart(s)", len(counterparts))
