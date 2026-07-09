@@ -112,7 +112,8 @@ def register(state_id: str, pubkey: str):
             return "disabled"
         if r.status_code == 200 and data.get("status") == "registered":
             return "registered"
-        if r.status_code in (401, 403, 409):
+        if r.status_code in (401, 403, 404, 409):
+            # 404 = unknown/deleted license key; as terminal as a 403.
             logger.warning("Relay register denied (%s): %s", r.status_code, data.get("error"))
             return "denied"
     except requests.RequestException as e:
@@ -125,7 +126,7 @@ def claim(state_id: str) -> dict:
         payload = _owner_payload()
         payload["state_id"] = state_id
         r, data = _post("/auth-relay/claim", payload)
-        if r.status_code in (401, 403):
+        if r.status_code in (401, 403, 404):
             return {"status": "denied", "error": data.get("error", "")}
         return data if data.get("status") else {"status": "unavailable"}
     except requests.RequestException:
@@ -153,7 +154,7 @@ def _poll_loop(state_id: str, complete_cb):
         started = _utcnow()
     deadline = started + datetime.timedelta(seconds=POLL_LIFETIME_SECONDS)
     registered = False
-    reregister_attempted = False
+    reregister_attempted = 0
     begun = time.monotonic()
 
     while _utcnow() < deadline:
@@ -162,6 +163,10 @@ def _poll_loop(state_id: str, complete_cb):
         if not registered:
             outcome = register(state_id, db.get_setting("pending_relay_pubkey"))
             if outcome == "registered":
+                if not _flow_matches(state_id):
+                    # A new attempt started while we were registering; our stale
+                    # register must not linger (its row will expire on its own).
+                    return
                 registered = True
                 _note("")
             elif outcome in ("disabled", "denied"):
@@ -181,12 +186,20 @@ def _poll_loop(state_id: str, complete_cb):
                     logger.error("Relay payload could not be decrypted: %s", e)
                     _note("Automatic completion failed. Use the link in the browser tab to finish.")
                     return
-                for attempt in range(3):
+                for attempt in range(5):
                     outcome, _message = complete_cb(code, state_id)
-                    if outcome != "retryable":
-                        return
-                    time.sleep(5)
-                _note("Automatic completion failed. Use the link in the browser tab to finish.")
+                    if outcome == "retryable":
+                        # exchange failed before consuming the code; try again
+                        time.sleep(5)
+                        continue
+                    if outcome == "in_progress":
+                        # the browser redirect is mid-exchange; wait it out and
+                        # re-check, in case its attempt fails retryably
+                        time.sleep(5)
+                        continue
+                    return
+                if not _flow_done():
+                    _note("Automatic completion failed. Use the link in the browser tab to finish.")
                 return
             if status == "cancelled":
                 if db.compare_and_swap_setting("auth_flow_status", "pending", "in_progress"):
@@ -200,9 +213,11 @@ def _poll_loop(state_id: str, complete_cb):
                 _note("Automatic completion is unavailable (license problem). Use the link in the browser tab to finish.")
                 return
             if status == "unknown":
-                if reregister_attempted:
+                # Row missing (registration raced a newer one, or the sweep ran);
+                # re-register a couple of times before giving up.
+                if reregister_attempted >= 2:
                     return
-                reregister_attempted = True
+                reregister_attempted += 1
                 registered = False
         elapsed = time.monotonic() - begun
         time.sleep(POLL_FAST_SECONDS if elapsed < POLL_FAST_WINDOW else POLL_SLOW_SECONDS)
@@ -237,6 +252,10 @@ def revive(complete_cb):
     """On app start, resume polling if a fresh auth attempt survived a restart."""
     if not relay_enabled():
         return
+    # An exchange cannot survive a process restart: an attempt still marked
+    # in_progress at boot crashed mid-exchange, so put it back to pending
+    # instead of leaving it stranded forever.
+    db.compare_and_swap_setting("auth_flow_status", "in_progress", "pending")
     if db.get_setting("auth_flow_status") not in ("pending",):
         return
     started_raw = db.get_setting("pending_session_started_at")

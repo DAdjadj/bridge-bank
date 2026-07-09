@@ -979,11 +979,15 @@ def _complete_auth_from_code(code, state, source="web"):
         return ("stale", "")
     if state_id != flow_id:
         # An attempt started before this release has no flow id; adopt it so
-        # in-flight auths keep working across the update.
+        # in-flight auths keep working across the update. The adopt itself is
+        # a compare-and-swap so two concurrent deliveries cannot both reset
+        # the status and double-exchange the code.
         if flow_id or db.get_setting("pending_session_state") != state_id:
             return ("stale", "")
-        db.set_setting("auth_flow_state_id", state_id)
-        db.set_setting("auth_flow_status", "pending")
+        if db.compare_and_swap_setting("auth_flow_state_id", "", state_id):
+            db.compare_and_swap_setting("auth_flow_status", "", "pending")
+        elif db.get_setting("auth_flow_state_id") != state_id:
+            return ("stale", "")
     if db.get_setting("auth_flow_status") == "done":
         return (db.get_setting("auth_flow_outcome") or "error", db.get_setting("auth_flow_message"))
     if not db.compare_and_swap_setting("auth_flow_status", "pending", "in_progress"):
@@ -1040,7 +1044,11 @@ def callback():
     error = request.args.get("error")
     if error or not code:
         logger.warning("Callback received error=%s code=%s", error, bool(code))
-        _mark_auth_cancelled()
+        # Only cancel the pending attempt when the request proves it belongs to
+        # it (state match); a stray or forged hit must not kill a live auth.
+        cancel_id = state.split("|")[-1] if state else ""
+        if cancel_id and cancel_id == db.get_setting("auth_flow_state_id"):
+            _mark_auth_cancelled()
         return redirect(url_for("bank") + "?error=Bank connection was cancelled or denied. Please try again.")
     outcome, message = _complete_auth_from_code(code, state, source="web")
     if outcome == "success":
@@ -1079,7 +1087,8 @@ def pick_account():
                         if scheme == "IBAN" or (not acct.get("iban") and len(alt["identification"]) >= 15 and alt["identification"][:2].isalpha()):
                             acct["iban"] = alt["identification"]
                             break
-    return render_template("pick_account.html", accounts=accounts, active="bank")
+    return render_template("pick_account.html", accounts=accounts, active="bank",
+                           picker_session_id=db.get_setting("pending_auth_session_id"))
 
 @app.route("/pick-account", methods=["POST"])
 def pick_account_post():
@@ -1088,6 +1097,11 @@ def pick_account_post():
         return redirect(url_for("pick_account"))
     session_id  = db.get_setting("pending_auth_session_id")
     valid_until = db.get_setting("pending_auth_valid_until")
+    # A picker form from an earlier attempt must not consume a newer
+    # attempt's session (the relay poller can refresh these in the background).
+    submitted_session = request.form.get("session_id", "")
+    if submitted_session and submitted_session != session_id:
+        return redirect(url_for("pick_account"))
     try:
         _save_bank_account(session_id, account_uid, valid_until)
     except Exception as e:
@@ -1378,6 +1392,9 @@ def _sanitize_logs(text):
     text = re.sub(r'\b(\w{2})\w*(@\w+\.\w+)', r'\1***\2', text)
     # Remove large JSON account blobs from Enable Banking
     text = re.sub(r"\[?\{'account_id':.*?\}\]?", '[account data redacted]', text)
+    # Mask OAuth query params: the access log records GET /callback?code=...&state=...
+    # and these logs get emailed to support, so the single-use code must not survive here.
+    text = re.sub(r'([?&](?:code|state)=)[^&\s"]+', r'\1[redacted]', text)
     return text
 
 LOG_FILE = "/data/bridge-bank.log"

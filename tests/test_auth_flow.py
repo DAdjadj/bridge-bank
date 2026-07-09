@@ -114,6 +114,52 @@ class CompleteAuthTest(unittest.TestCase):
             outcome, _ = server._complete_auth_from_code("code-1", self.state, source="web")
         self.assertEqual(outcome, "success")
 
+    def test_concurrent_legacy_adoption_exchanges_once(self):
+        """Two simultaneous deliveries of a legacy (pre-update) attempt must not
+        both adopt it and double-exchange the code."""
+        import time as _time
+        appdb.set_setting("auth_flow_state_id", "")
+        appdb.set_setting("auth_flow_status", "")
+        calls = []
+
+        def slow_exchange(code, state):
+            calls.append(code)
+            _time.sleep(0.2)
+            return _one_account_result()
+
+        results = []
+        with patch("app.enablebanking.complete_auth", side_effect=slow_exchange), \
+             patch.object(server, "_save_bank_account"):
+            threads = [threading.Thread(target=lambda: results.append(
+                server._complete_auth_from_code("code-1", self.state, source="race")))
+                for _ in range(2)]
+            for t in threads: t.start()
+            for t in threads: t.join()
+        self.assertEqual(len(calls), 1)
+
+    def test_callback_cancel_requires_matching_state(self):
+        """A stray /callback?error=x hit must not cancel a live auth attempt."""
+        client = server.app.test_client()
+        client.get("/callback?error=access_denied")
+        self.assertEqual(appdb.get_setting("auth_flow_status"), "pending")
+        # with the matching state it does cancel
+        client.get("/callback?error=access_denied&state=bridge-bank-auth2|http://x|" + self.state)
+        self.assertEqual(appdb.get_setting("auth_flow_status"), "done")
+        self.assertEqual(appdb.get_setting("auth_flow_outcome"), "cancelled")
+
+    def test_transient_marker_matches_gateway_errors(self):
+        from app.sync import _is_transient_actual_error
+        self.assertTrue(_is_transient_actual_error(RuntimeError(
+            "Server error '502 Bad Gateway' for url 'https://x.pikapod.net/sync/sync'")))
+        self.assertTrue(_is_transient_actual_error(RuntimeError("503 Service Unavailable")))
+        self.assertFalse(_is_transient_actual_error(RuntimeError("401 Unauthorized")))
+
+    def test_log_sanitizer_masks_oauth_params(self):
+        line = 'GET /callback?code=SECRET-CODE&state=bridge-bank-auth2%7Chttp HTTP/1.1" 302'
+        out = server._sanitize_logs(line)
+        self.assertNotIn("SECRET-CODE", out)
+        self.assertIn("code=[redacted]", out)
+
     def test_multiple_accounts_route_to_picker(self):
         with patch("app.enablebanking.complete_auth", return_value=_two_account_result()):
             outcome, _ = server._complete_auth_from_code("code-1", self.state, source="relay")
@@ -215,12 +261,39 @@ class PollerTest(unittest.TestCase):
         self.assertEqual(appdb.get_setting("auth_flow_status"), "done")
         self.assertEqual(appdb.get_setting("auth_flow_outcome"), "cancelled")
 
-    def test_unknown_twice_stops_after_one_reregister(self):
+    def test_unknown_stops_after_two_reregisters(self):
         registers = []
         with patch.object(relay, "register", side_effect=lambda *a: (registers.append(1) or "registered")), \
              patch.object(relay, "claim", return_value={"status": "unknown"}):
             self._run_poller()
-        self.assertEqual(len(registers), 2)
+        self.assertEqual(len(registers), 3)  # initial + 2 re-registers
+
+    def test_poller_waits_out_browser_exchange(self):
+        """A racing browser exchange (in_progress) must not kill the poller."""
+        outcomes = iter(["in_progress", "in_progress", "success"])
+        calls = []
+        with patch.object(relay, "register", return_value="registered"), \
+             patch.object(relay, "claim", return_value={"status": "ready", "ct": "x", "iv": "y", "epk": "z"}), \
+             patch.object(relay, "decrypt_code", return_value="the-code"), \
+             patch.object(relay.time, "sleep"):
+            self._run_poller(lambda code, state: (calls.append(1) or (next(outcomes), "")))
+        self.assertEqual(len(calls), 3)
+
+    def test_revive_resets_stranded_in_progress(self):
+        """A crash mid-exchange leaves in_progress; revive must unblock it."""
+        appdb.set_setting("auth_flow_status", "in_progress")
+        launched = []
+        with patch.object(relay, "launch", side_effect=lambda cb: launched.append(1)):
+            relay.revive(lambda code, state: ("success", ""))
+        self.assertEqual(appdb.get_setting("auth_flow_status"), "pending")
+        self.assertEqual(len(launched), 1)
+
+    def test_denied_includes_404_unknown_license(self):
+        class R:
+            status_code = 404
+        with patch.object(relay, "_post", return_value=(R(), {"error": "Invalid license key"})):
+            self.assertEqual(relay.register("s", "p"), "denied")
+            self.assertEqual(relay.claim("s")["status"], "denied")
 
     def test_poller_exits_when_new_auth_starts(self):
         with patch.object(relay, "register", return_value="registered"), \
@@ -235,7 +308,7 @@ class PollerTest(unittest.TestCase):
              patch.object(relay, "decrypt_code", return_value="the-code"), \
              patch.object(relay.time, "sleep"):
             self._run_poller(lambda code, state: (attempts.append(1) or ("retryable", "eb down")))
-        self.assertEqual(len(attempts), 3)
+        self.assertEqual(len(attempts), 5)
         self.assertIn("failed", appdb.get_setting("auth_relay_note"))
 
 
