@@ -115,6 +115,24 @@ def set_setting(key: str, value: str):
         )
         conn.commit()
 
+def compare_and_swap_setting(key: str, expected: str, new: str) -> bool:
+    """Atomically set `key` to `new` only if its current value is `expected`.
+
+    The atomicity rides on SQLite (single UPDATE with a WHERE guard), not on a
+    process-local lock, so it stays correct even if the app ever runs with
+    multiple worker processes. A missing row counts as "".
+    """
+    with _conn() as conn:
+        _ensure_tables(conn)
+        if expected == "":
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, '')", (key,))
+        cur = conn.execute(
+            "UPDATE settings SET value = ? WHERE key = ? AND value = ?",
+            (new, key, expected)
+        )
+        conn.commit()
+        return cur.rowcount == 1
+
 def log_sync(status: str, tx_count: int = 0, message: str = ""):
     with _conn() as conn:
         _ensure_tables(conn)

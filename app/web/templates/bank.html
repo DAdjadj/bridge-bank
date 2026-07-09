@@ -14,6 +14,9 @@
 {% if error %}
   <div class="alert alert-error">{{ error }}</div>
 {% endif %}
+{% if picker_pending and not auth_url %}
+  <div class="alert alert-warn"><strong>Almost done:</strong> your bank returned several accounts. <a href="/pick-account" style="color:inherit;font-weight:600;">Choose which one to connect &rarr;</a></div>
+{% endif %}
 {% if bank_seat_error %}
   <div class="alert alert-error">{{ bank_seat_error }}</div>
 {% endif %}
@@ -211,15 +214,15 @@
   </div>
 
 {% elif auth_url %}
-  <div class="card">
+  <div class="card" id="auth-progress-card">
     <div class="card-title">Connect your bank</div>
-    <div class="card-sub">Approve access in your browser, then come back here.</div>
+    <div class="card-sub">Approve access in your bank's login page. This page updates on its own.</div>
     <div style="text-align:center;padding:0.5rem 0 1rem;">
-      <div style="font-size:15px;font-weight:600;margin-bottom:0.5rem;">Authorise your bank</div>
-      <div style="font-size:13px;color:#94a3b8;margin-bottom:1.5rem;line-height:1.6;">Click the button below to open your bank login page.<br>After approving, you will be returned here automatically.</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:0.5rem;" id="auth-progress-title">Authorise your bank</div>
+      <div style="font-size:13px;color:#94a3b8;margin-bottom:1.5rem;line-height:1.6;" id="auth-progress-text">Click the button below to open your bank login in a new tab.<br>Keep this tab open. It will show when the connection is done.</div>
     </div>
-    <a href="{{ auth_url }}" class="btn btn-primary">Open bank login &rarr;</a>
-    <form method="POST" style="margin-top:0.75rem;">
+    <a href="{{ auth_url }}" target="_blank" rel="noopener" class="btn btn-primary" id="auth-open-link">Open bank login &rarr;</a>
+    <form method="POST" style="margin-top:0.75rem;" id="auth-cancel-form">
       <input type="hidden" name="action" value="cancel">
       <button type="submit" class="btn btn-ghost" style="width:100%;">Cancel</button>
     </form>
@@ -231,6 +234,38 @@
 {% endif %}
 
 <script>
+  // While an auth attempt is pending, watch its progress so this tab flips
+  // to the result even when the relay (not the browser redirect) finishes it.
+  (function () {
+    if (!document.getElementById('auth-progress-card')) return;
+    const title = document.getElementById('auth-progress-title');
+    const text  = document.getElementById('auth-progress-text');
+    const link  = document.getElementById('auth-open-link');
+    let timer = setInterval(async () => {
+      let p;
+      try {
+        p = await (await fetch('/api/auth-progress')).json();
+      } catch (e) { return; }
+      if (p.status === 'done') {
+        clearInterval(timer);
+        if (p.outcome === 'picker' || p.picker_pending) {
+          window.location.href = '/pick-account';
+        } else if (p.outcome === 'success') {
+          title.textContent = 'Bank connected';
+          text.textContent = 'Your bank is connected and the first sync has started.';
+          link.style.display = 'none';
+          setTimeout(() => { window.location.href = '/status'; }, 1500);
+        } else if (p.outcome === 'cancelled') {
+          window.location.href = '/bank?error=' + encodeURIComponent(p.message || 'Bank connection was cancelled. Please try again.');
+        } else {
+          window.location.href = '/bank?error=' + encodeURIComponent(p.message || 'Bank connection failed. Please try again.');
+        }
+      } else if (p.note) {
+        text.textContent = p.note;
+      }
+    }, 2000);
+  })();
+
   let allBanks = [];
 
   async function loadBanks() {

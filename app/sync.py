@@ -134,6 +134,11 @@ def _is_transient_actual_error(exc):
             "connection reset",
             "temporarily unavailable",
             "remote protocol error",
+            # A hosted Actual instance (PikaPods etc.) answering 502/503/504
+            # is briefly unreachable behind its proxy, not gone; retry.
+            "bad gateway",
+            "service unavailable",
+            "gateway timeout",
         )
     )
 
