@@ -302,14 +302,21 @@ def _record_reconciled_transaction(transaction, existing_ids: set[str], new_txn:
     return "skipped"
 
 def _patch_payee_name_rules(session):
-    """Remap 'payee_name' to 'description' in rule actions so actualpy can process them.
+    """Remap Actual's UI-level rule field names to the ones actualpy accepts.
 
-    Actual Budget uses 'payee_name' for set-payee actions, but actualpy only
-    accepts 'description' (which it maps to payee_id internally). Without this
-    patch, run_rules() raises a Pydantic validation error and no rules apply."""
+    Actual Budget stores rule conditions/actions with fields like 'payee',
+    'account', 'payee_name' and 'imported_payee'; actualpy only accepts the
+    internal column names ('description', 'acct', 'imported_description').
+    Without this patch a single rule using one of those fields makes the
+    ruleset fail Pydantic validation and no rules apply on import."""
     import json
     from actual.queries import get_rules
-    field_map = {"payee_name": "description", "imported_payee": "imported_description"}
+    field_map = {
+        "payee_name": "description",
+        "imported_payee": "imported_description",
+        "payee": "description",
+        "account": "acct",
+    }
     for rule in get_rules(session):
         for attr in ("conditions", "actions"):
             raw = getattr(rule, attr, None)
@@ -327,6 +334,32 @@ def _patch_payee_name_rules(session):
                     patched = True
             if patched:
                 setattr(rule, attr, json.dumps(items))
+
+def _load_ruleset_tolerant(session):
+    """Build the ruleset one rule at a time, skipping rules actualpy cannot parse.
+
+    actualpy's get_ruleset() validates every rule in one go, so a single rule
+    using an unsupported field or operator would disable EVERY rule for the
+    whole import (while manual 'Run Rules' in Actual still works, since that
+    uses Actual's own engine). Skipped rules are logged with their contents."""
+    from pydantic import TypeAdapter
+    from actual.queries import get_rules
+    from actual.rules import Rule, Condition, Action, RuleSet
+    rules = []
+    for rule in get_rules(session):
+        if not rule.conditions or not rule.actions:
+            continue
+        try:
+            conditions = TypeAdapter(list[Condition]).validate_json(rule.conditions)
+            actions = TypeAdapter(list[Action]).validate_json(rule.actions)
+            rules.append(Rule(conditions=conditions, operation=rule.conditions_op,
+                              actions=actions, stage=rule.stage))
+        except Exception as e:
+            log.warning(
+                "Skipping rule the import engine cannot process (it still "
+                "works via 'Run Rules' in Actual). conditions=%s actions=%s | %s",
+                rule.conditions, rule.actions, e)
+    return RuleSet(rules=rules)
 
 _action_run_patched = False
 _migrations_patched = False
@@ -427,10 +460,10 @@ def _patch_action_note_casing():
     _rules.Action.run = _patched_run
     _action_run_patched = True
 
-def _run_rules_on_transfer_counterparts(actual, new_txn):
+def _run_rules_on_transfer_counterparts(actual, new_txn, ruleset):
     """Run rules on the mirrored side of transfers created by this import.
 
-    Only imported transactions go through run_rules, so rules that target
+    Only imported transactions go through the rule pass, so rules that target
     the counterpart row (e.g. account is 'Savings' -> set notes) never fire
     automatically; the user has to select the transaction and click
     'Run Rules' by hand. Collect the counterparts of any new transfers and
@@ -456,7 +489,7 @@ def _run_rules_on_transfer_counterparts(actual, new_txn):
     if not counterparts:
         return
     log.info("Applying rules to %d transfer counterpart(s)", len(counterparts))
-    actual.run_rules(counterparts)
+    ruleset.run(counterparts)
     _fix_rule_note_casing(actual.session, counterparts)
 
 def _fix_rule_note_casing(session, transactions):
@@ -956,9 +989,10 @@ def _sync_account(account, state):
                 with _actual_phase(bank_label, "apply Actual rules"):
                     _patch_payee_name_rules(actual.session)
                     _patch_action_note_casing()
-                    actual.run_rules(new_txn)
+                    ruleset = _load_ruleset_tolerant(actual.session)
+                    ruleset.run(new_txn)
                     _fix_rule_note_casing(actual.session, new_txn)
-                    _run_rules_on_transfer_counterparts(actual, new_txn)
+                    _run_rules_on_transfer_counterparts(actual, new_txn, ruleset)
             except Exception as e:
                 log.error("Error applying rules: %s", e)
 
