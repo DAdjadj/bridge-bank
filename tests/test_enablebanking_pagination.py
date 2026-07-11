@@ -55,10 +55,12 @@ class EnableBankingPaginationTest(unittest.TestCase):
         self.assertEqual(calls[0]["params"], {
             "date_from": "2026-05-01",
             "date_to": date_to,
+            "strategy": "longest",
         })
         self.assertEqual(calls[1]["params"], {
             "date_from": "2026-05-01",
             "date_to": date_to,
+            "strategy": "longest",
             "continuation_key": "next-page",
         })
 

@@ -224,8 +224,37 @@ def _get_session(account):
     return sid, uid
 
 def _fetch_transactions(account_uid, date_from):
+    """Fetch transactions, tolerating banks' unattended-history limits.
+
+    Outside the short window right after SCA, many banks (ING NL among them)
+    only serve ~90 days of history to unattended fetches; requesting more
+    returns 422 WRONG_TRANSACTIONS_PERIOD, and a stale pending transaction in
+    pending_map can drag date_from past that boundary months after connecting.
+    strategy=longest asks Enable Banking to clamp to whatever the bank allows
+    instead of erroring. Two fallbacks: banks that reject the strategy hint
+    get a plain request, and a WRONG_TRANSACTIONS_PERIOD anyway is retried
+    with the window clamped to 89 days."""
+    try:
+        return _fetch_transactions_once(account_uid, date_from, use_strategy=True)
+    except requests.HTTPError as e:
+        body = (getattr(e.response, "text", "") or "").upper() if e.response is not None else ""
+        status = e.response.status_code if e.response is not None else 0
+        if status in (400, 422) and ("STRATEGY" in body or "WRONG_REQUEST_PARAMETERS" in body):
+            log.warning("Bank rejected the transactions strategy hint; retrying without it")
+            return _fetch_transactions_once(account_uid, date_from, use_strategy=False)
+        if "WRONG_TRANSACTIONS_PERIOD" in body:
+            clamped = max(date_from, datetime.date.today() - datetime.timedelta(days=89))
+            if clamped != date_from:
+                log.warning("Bank refused history from %s (unattended limit); retrying from %s",
+                            date_from.isoformat(), clamped.isoformat())
+                return _fetch_transactions_once(account_uid, clamped, use_strategy=True)
+        raise
+
+def _fetch_transactions_once(account_uid, date_from, use_strategy=True):
     headers = _make_headers()
     base_params = {"date_from": date_from.isoformat(), "date_to": datetime.date.today().isoformat()}
+    if use_strategy:
+        base_params["strategy"] = "longest"
     params  = dict(base_params)
     txns    = []
     url     = f"{EB_API}/accounts/{account_uid}/transactions"
@@ -235,9 +264,10 @@ def _fetch_transactions(account_uid, date_from):
             time.sleep(1)
         for attempt in range(4):
             r = requests.get(url, headers=headers, params=params, timeout=30)
-            if r.status_code == 429:
+            # 5xx from Enable Banking is a brief upstream problem, same as 429.
+            if r.status_code == 429 or r.status_code >= 500:
                 wait = min(2 ** attempt * 5, 60)
-                log.warning("Rate limited (429), retrying in %ds (attempt %d/4)", wait, attempt + 1)
+                log.warning("Enable Banking %s, retrying in %ds (attempt %d/4)", r.status_code, wait, attempt + 1)
                 time.sleep(wait)
                 continue
             break
@@ -252,6 +282,44 @@ def _fetch_transactions(account_uid, date_from):
         page += 1
     log.info("Fetched %d transactions from Enable Banking", len(txns))
     return txns
+
+def _eb_error_snippet(response):
+    """Short, safe extract of an Enable Banking error body for user-facing
+    sync-log messages, so failures are diagnosable from the Status page
+    without a full log download."""
+    if response is None:
+        return ""
+    try:
+        data = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("code", "error", "detail", "message"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return ": " + val.strip()[:160]
+    return ""
+
+def _fetch_failure_message(bank_label, exc):
+    """User-facing sync-log message for a failed Enable Banking fetch.
+
+    Only 401/403 actually mean the session needs re-authorising; sending
+    users to re-auth for rate limits or bank-side errors wastes their SCA
+    and hides the real problem."""
+    response = getattr(exc, "response", None)
+    status = response.status_code if response is not None else 0
+    if status == 429:
+        return f"{bank_label}: Your bank is rate-limiting requests. Bridge Bank will retry on the next scheduled sync."
+    if status in (401, 403):
+        return f"{bank_label}: Your bank session has expired. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."
+    if isinstance(exc, requests.HTTPError):
+        detail = _eb_error_snippet(response)
+        return (f"{bank_label}: Your bank refused the request (error {status}{detail}). "
+                "If this repeats, click 'Re-authorise bank' on the Bank page and send your logs "
+                "from the Status page to support@bridgebank.app.")
+    return (f"{bank_label}: Could not reach your bank's API ({type(exc).__name__}). "
+            "Bridge Bank will retry on the next scheduled sync.")
 
 def _parse_date(t):
     raw = t.get("booking_date") or t.get("value_date") or t.get("transaction_date")
@@ -864,13 +932,8 @@ def _sync_account(account, state):
 
     try:
         raw = _fetch_transactions(account_uid, date_from)
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code == 429:
-            msg = f"{bank_label}: Your bank is rate-limiting requests. Bridge Bank will retry on the next scheduled sync."
-        elif e.response is not None and e.response.status_code in (401, 403):
-            msg = f"{bank_label}: Your bank session has expired. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."
-        else:
-            msg = f"{bank_label}: Could not fetch transactions from your bank. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."
+    except requests.RequestException as e:
+        msg = _fetch_failure_message(bank_label, e)
         log.error(msg)
         return False, 0, msg
 
