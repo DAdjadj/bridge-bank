@@ -414,6 +414,7 @@ def _load_ruleset_tolerant(session):
     from actual.queries import get_rules
     from actual.rules import Rule, Condition, Action, RuleSet
     rules = []
+    skipped = 0
     for rule in get_rules(session):
         if not rule.conditions or not rule.actions:
             continue
@@ -423,11 +424,33 @@ def _load_ruleset_tolerant(session):
             rules.append(Rule(conditions=conditions, operation=rule.conditions_op,
                               actions=actions, stage=rule.stage))
         except Exception as e:
+            skipped += 1
             log.warning(
                 "Skipping rule the import engine cannot process (it still "
                 "works via 'Run Rules' in Actual). conditions=%s actions=%s | %s",
                 rule.conditions, rule.actions, e)
+    log.info("Rules loaded: %d, skipped: %d", len(rules), skipped)
     return RuleSet(rules=rules)
+
+def _run_ruleset_tolerant(ruleset, transactions):
+    """Run rules one at a time so a single failing rule cannot abort the rest.
+
+    actualpy's RuleSet.run lets any exception propagate, so one rule that
+    crashes at run time (e.g. an invalid regex in a 'matches' condition, or
+    an edge-case value) silently cancels the whole rule pass for the import,
+    while the same rules keep working via 'Run Rules' in Actual. Keeps the
+    pre -> default -> post stage order."""
+    failed_rules = 0
+    for stage in ("pre", None, "post"):
+        for rule in [r for r in ruleset.rules if r.stage == stage]:
+            try:
+                for txn in transactions:
+                    rule.run(txn)
+            except Exception as e:
+                failed_rules += 1
+                log.warning("Rule failed at run time and was skipped: %s | %s", rule, e)
+    if failed_rules:
+        log.warning("%d rule(s) failed at run time this pass", failed_rules)
 
 _action_run_patched = False
 _migrations_patched = False
@@ -557,7 +580,7 @@ def _run_rules_on_transfer_counterparts(actual, new_txn, ruleset):
     if not counterparts:
         return
     log.info("Applying rules to %d transfer counterpart(s)", len(counterparts))
-    ruleset.run(counterparts)
+    _run_ruleset_tolerant(ruleset, counterparts)
     _fix_rule_note_casing(actual.session, counterparts)
 
 def _fix_rule_note_casing(session, transactions):
@@ -1053,7 +1076,7 @@ def _sync_account(account, state):
                     _patch_payee_name_rules(actual.session)
                     _patch_action_note_casing()
                     ruleset = _load_ruleset_tolerant(actual.session)
-                    ruleset.run(new_txn)
+                    _run_ruleset_tolerant(ruleset, new_txn)
                     _fix_rule_note_casing(actual.session, new_txn)
                     _run_rules_on_transfer_counterparts(actual, new_txn, ruleset)
             except Exception as e:
