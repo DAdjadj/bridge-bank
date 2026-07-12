@@ -1,4 +1,7 @@
-actualpy>=0.21.0
+# Pinned exactly: the rule-engine monkeypatches in app/sync.py and main.py
+# are verified against this specific version. A loose range plus Docker layer
+# caching let production (0.22.2) drift from the tested version (0.22.3).
+actualpy==0.22.3
 requests>=2.31.0
 schedule>=1.2.0
 PyJWT>=2.8.0

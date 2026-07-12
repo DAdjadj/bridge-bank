@@ -539,9 +539,19 @@ def _patch_action_note_casing():
         if (self.op == _rules.ActionType.SET
                 and self.type == _rules.ValueType.STRING
                 and isinstance(self.value, str)):
-            split_index = self.get_split_index()
-            if split_index and len(transaction.splits) >= split_index:
-                transaction = transaction.splits[split_index - 1]
+            # Derive the split index from options directly instead of the
+            # get_split_index() helper, which only exists in actualpy
+            # >= 0.22.3. A production image with an older version turned
+            # this patch into an AttributeError on every set-notes rule.
+            split_index = 0
+            if self.options:
+                try:
+                    split_index = int(self.options.get("splitIndex", 0) or 0)
+                except (TypeError, ValueError):
+                    split_index = 0
+            splits = getattr(transaction, "splits", None) or []
+            if split_index and len(splits) >= split_index:
+                transaction = splits[split_index - 1]
             attr = _rules.get_attribute_by_table_name(
                 str(_rules.Transactions.__tablename__), str(self.field))
             setattr(transaction, attr, self.value)
