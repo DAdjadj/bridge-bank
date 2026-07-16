@@ -100,7 +100,7 @@ def _actual_phase(label, phase):
 @contextlib.contextmanager
 def _actual_client(label):
     from actual import Actual
-    _patch_idempotent_migrations()
+    ensure_actual_compat_patches()
     actual = Actual(**_actual_kwargs())
     _attach_actual_diagnostics(actual, label)
     try:
@@ -454,6 +454,16 @@ def _run_ruleset_tolerant(ruleset, transactions):
 
 _action_run_patched = False
 _migrations_patched = False
+_apply_changes_patched = False
+
+def ensure_actual_compat_patches():
+    """Install the actualpy compatibility patches (idempotent).
+
+    Any code path that opens an Actual client outside _actual_client (e.g.
+    the web UI's connection tests and account validation) must call this
+    first, so budget downloads survive budgets from newer Actual servers."""
+    _patch_idempotent_migrations()
+    _patch_unknown_table_sync()
 
 def _patch_idempotent_migrations():
     """Tolerate already-applied schema changes when actualpy replays migrations.
@@ -518,6 +528,47 @@ def _patch_idempotent_migrations():
 
     Actual.run_migrations = _run_migrations
     _migrations_patched = True
+
+def _patch_unknown_table_sync():
+    """Skip sync messages for tables this actualpy version does not model.
+
+    Actual servers grow new tables ahead of actualpy releases: 26.4.0 added
+    payee_locations for the experimental Payee Locations feature, and actualpy
+    (through 0.22.3) has no model for it. apply_changes raises on the first
+    sync message touching an unknown table, so every budget download fails
+    with "Could not find table '...' on the database model" until the library
+    catches up. Bridge Bank only reads and writes accounts, transactions,
+    payees and rules, so changes to other tables can safely be left out of its
+    local budget copy; the server's data is untouched either way. Drop those
+    messages with a warning and apply the rest. Remove once actualpy models
+    the new tables. Upstream: bvanelli/actualpy apply_changes."""
+    global _apply_changes_patched
+    if _apply_changes_patched:
+        return
+    from actual import Actual
+    from actual.database import __TABLE_COLUMNS_MAP__ as _table_map
+
+    _orig_apply_changes = Actual.apply_changes
+
+    def _apply_changes(self, messages):
+        supported, skipped = [], {}
+        for message in messages:
+            # 'prefs' is not a table; apply_changes routes it to metadata.json
+            if message.dataset == "prefs" or message.dataset in _table_map:
+                supported.append(message)
+            else:
+                skipped[message.dataset] = skipped.get(message.dataset, 0) + 1
+        for dataset, count in sorted(skipped.items()):
+            log.warning(
+                "Skipping %d sync change(s) for table '%s', which this actualpy "
+                "version does not support; the rest of the sync continues.",
+                count,
+                dataset,
+            )
+        return _orig_apply_changes(self, supported)
+
+    Actual.apply_changes = _apply_changes
+    _apply_changes_patched = True
 
 def _patch_action_note_casing():
     """Stop actualpy from lowercasing note values written by rules.

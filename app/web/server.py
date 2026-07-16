@@ -286,6 +286,8 @@ def setup_actual():
             # Validate connection before saving
             try:
                 from actual import Actual
+                from ..sync import ensure_actual_compat_patches
+                ensure_actual_compat_patches()
                 with Actual(base_url=url, password=password, encryption_password=enc_password, file=sync_id, data_dir="/data/actual-cache"):
                     pass
             except ConnectionError:
@@ -611,6 +613,8 @@ def actual_accounts_api():
     try:
         from actual import Actual
         from actual.queries import get_accounts
+        from ..sync import ensure_actual_compat_patches
+        ensure_actual_compat_patches()
         with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
                     encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
                     file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
@@ -668,6 +672,8 @@ def bank():
                 try:
                     from actual import Actual
                     from actual.queries import get_accounts
+                    from ..sync import ensure_actual_compat_patches
+                    ensure_actual_compat_patches()
                     with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
                                 encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
                                 file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
@@ -742,6 +748,8 @@ def bank():
                     try:
                         from actual import Actual
                         from actual.queries import get_accounts
+                        from ..sync import ensure_actual_compat_patches
+                        ensure_actual_compat_patches()
                         with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
                                     encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
                                     file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
