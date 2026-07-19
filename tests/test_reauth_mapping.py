@@ -182,7 +182,69 @@ class MappingSubmitTest(_IsolatedDbTest):
             "map_%s" % a: "new-a", "map_%s" % b: "",
         })
         self.assertEqual(appdb.get_bank_account(a)["account_uid"], "new-a")
+        # session_id matters as much as the uid: a refreshed session on the
+        # unselected account would be exactly the orphaning bug again.
         self.assertEqual(appdb.get_bank_account(b)["account_uid"], "old-uid")
+        self.assertEqual(appdb.get_bank_account(b)["session_id"], "old-sess")
+        self.assertEqual(appdb.get_bank_account(b)["session_expiry"], "2026-09-01")
+
+    def test_success_clears_pending_state_and_redirects_to_status(self):
+        a = _add("Openbank")
+        b = _add("Openbank Betaal")
+        _pending_reauth(a)
+        resp = self.client.post("/pick-account", data={
+            "session_id": "new-sess", "mapping_mode": "1",
+            "map_%s" % a: "new-a", "map_%s" % b: "new-b",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/status", resp.headers["Location"])
+        for key in ("pending_auth_session_id", "pending_auth_accounts",
+                    "pending_auth_valid_until", "pending_reauth_account_id"):
+            self.assertEqual(appdb.get_setting(key), "", key)
+
+    def test_rejection_redirects_back_to_picker_with_error(self):
+        a = _add("Openbank")
+        b = _add("Openbank Betaal")
+        _pending_reauth(a)
+        resp = self.client.post("/pick-account", data={
+            "session_id": "new-sess", "mapping_mode": "1",
+            "map_%s" % a: "new-a", "map_%s" % b: "not-in-this-session",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/pick-account", resp.headers["Location"])
+        self.assertIn("error=", resp.headers["Location"])
+        # The pending auth must survive a rejected submission so the user can
+        # correct the mapping instead of restarting the whole authorisation.
+        self.assertEqual(appdb.get_setting("pending_auth_session_id"), "new-sess")
+
+    def test_swapping_the_two_accounts_is_allowed(self):
+        # Deliberate remaps must stay possible: the stored uids can be stale or
+        # wrong (that is the very situation this feature repairs), so the form
+        # cannot validate against them. The row labels carry the IBANs; picking
+        # the right one is the user's call, same as the ordinary picker.
+        a = _add("Openbank", uid="was-a")
+        b = _add("Openbank Betaal", uid="was-b")
+        _pending_reauth(a)
+        self.client.post("/pick-account", data={
+            "session_id": "new-sess", "mapping_mode": "1",
+            "map_%s" % a: "new-b", "map_%s" % b: "new-a",
+        })
+        self.assertEqual(appdb.get_bank_account(a)["account_uid"], "new-b")
+        self.assertEqual(appdb.get_bank_account(b)["account_uid"], "new-a")
+
+    def test_forged_key_for_other_banks_account_is_ignored(self):
+        a = _add("Openbank")
+        b = _add("Openbank Betaal")
+        c = _add("ING", bank="ING", session="ing-sess", uid="ing-uid")
+        _pending_reauth(a)
+        self.client.post("/pick-account", data={
+            "session_id": "new-sess", "mapping_mode": "1",
+            "map_%s" % a: "new-a",
+            "map_%s" % c: "new-b",   # forged: ING is not a sibling
+        })
+        row = appdb.get_bank_account(c)
+        self.assertEqual(row["session_id"], "ing-sess")
+        self.assertEqual(row["account_uid"], "ing-uid")
 
     def test_stale_session_submission_is_ignored(self):
         a = _add("Openbank")
@@ -201,6 +263,53 @@ class MappingSubmitTest(_IsolatedDbTest):
         self.client.post("/pick-account", data={"session_id": "new-sess", "account_uid": "new-a"})
         self.assertEqual(appdb.get_bank_account(a)["account_uid"], "new-a")
         self.assertEqual(appdb.get_bank_account(b)["account_uid"], "old-uid")
+
+
+class MappingRenderTest(_IsolatedDbTest):
+    """The mapping form against the account shapes Enable Banking really sends."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = server.app.test_client()
+
+    def _render(self, accounts_json):
+        a = _add("Openbank")
+        _add("Openbank Betaal")
+        _pending_reauth(a, accounts_json=accounts_json)
+        return self.client.get("/pick-account").get_data(as_text=True)
+
+    def test_iban_extracted_from_account_id_dict_and_all_account_ids(self):
+        body = self._render(
+            '[{"uid": "u1", "account_id": {"iban": "NL91ABNA0417164300"}, "currency": "EUR"},'
+            ' {"uid": "u2", "all_account_ids":'
+            '   [{"scheme_name": "IBAN", "identification": "NL39RABO0300065264"}]}]'
+        )
+        self.assertIn("Reconnect your accounts", body)
+        self.assertIn("NL91", body)
+        self.assertIn("4300", body)
+        self.assertIn("NL39", body)
+        self.assertIn("5264", body)
+
+    def test_accounts_without_iban_or_name_get_fallback_labels(self):
+        body = self._render('[{"uid": "u1"}, {"uid": "u2"}]')
+        self.assertIn("Account 1", body)
+        self.assertIn("Account 2", body)
+
+    def test_error_query_param_is_shown_escaped(self):
+        _add("Openbank")
+        _add("Openbank Betaal")
+        body = self.client.get(
+            "/pick-account?error=<script>alert(1)</script>"
+        ).get_data(as_text=True)
+        # No pending auth -> redirected, no reflection either way
+        self.assertNotIn("<script>alert(1)</script>", body)
+        a = appdb.get_all_bank_accounts()[0]["id"]
+        _pending_reauth(a)
+        body = self.client.get(
+            "/pick-account?error=<script>alert(1)</script>"
+        ).get_data(as_text=True)
+        self.assertNotIn("<script>alert(1)</script>", body)
+        self.assertIn("&lt;script&gt;", body)
 
 
 if __name__ == "__main__":
