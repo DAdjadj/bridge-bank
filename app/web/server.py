@@ -1073,16 +1073,19 @@ def callback():
         return redirect(url_for("bank") + "?error=Bank connection was cancelled or denied. Please try again.")
     return redirect(url_for("bank") + "?error=Bank connection failed: " + (message or "unknown error") + ". If this keeps happening, please download your logs from the Status page and send them to support@bridgebank.app.")
 
-@app.route("/pick-account")
-def pick_account():
-    import json
-    accounts_json = db.get_setting("pending_auth_accounts")
-    if not accounts_json:
-        return redirect(url_for("bank"))
-    accounts = json.loads(accounts_json)
-    logger.info("Account picker data: %s", accounts_json)
-    # Extract IBAN from various Enable Banking response formats
-    for acct in accounts:
+def _account_uid_of(acct):
+    return acct.get("uid") or acct.get("account_uid") or acct.get("resource_id")
+
+def _picker_label(acct, index):
+    iban = acct.get("iban")
+    if iban and len(iban) >= 8:
+        return "%s •••• %s" % (iban[:4], iban[-4:])
+    return acct.get("account_name") or acct.get("owner_name") or ("Account %d" % index)
+
+def _decorate_picker_accounts(accounts):
+    """Fill in iban/uid/label for accounts returned by Enable Banking."""
+    for i, acct in enumerate(accounts, start=1):
+        # Extract IBAN from various Enable Banking response formats
         if not acct.get("iban"):
             aid = acct.get("account_id")
             if isinstance(aid, dict):
@@ -1095,14 +1098,82 @@ def pick_account():
                         if scheme == "IBAN" or (not acct.get("iban") and len(alt["identification"]) >= 15 and alt["identification"][:2].isalpha()):
                             acct["iban"] = alt["identification"]
                             break
+        acct["_uid"] = _account_uid_of(acct)
+        acct["_label"] = _picker_label(acct, i)
+    return accounts
+
+def _reauth_sibling_accounts():
+    """Stored transaction accounts held at the bank currently being re-authorised.
+
+    Enable Banking account uids are scoped to their session, so when one auth
+    covers several accounts they must all be refreshed together; refreshing only
+    the re-authorised one leaves its siblings pointing at a uid whose session is
+    no longer authorised (the bank then rejects every request).
+    """
+    reauth_id = (db.get_setting("pending_reauth_account_id") or "").strip()
+    if not reauth_id:
+        return []
+    try:
+        target = db.get_bank_account(int(reauth_id))
+    except (TypeError, ValueError):
+        return []
+    if not target:
+        return []
+    return [
+        a for a in db.get_all_bank_accounts()
+        if a.get("sync_mode") != "balance"
+        and a.get("bank_name") == target.get("bank_name")
+        and a.get("bank_country") == target.get("bank_country")
+    ]
+
+@app.route("/pick-account")
+def pick_account():
+    import json
+    accounts_json = db.get_setting("pending_auth_accounts")
+    if not accounts_json:
+        return redirect(url_for("bank"))
+    accounts = _decorate_picker_accounts(json.loads(accounts_json))
+    logger.info("Account picker data: %s", accounts_json)
+    # When a re-auth covers several stored accounts at the same bank, map each
+    # one instead of connecting a single account and orphaning the rest.
+    siblings = _reauth_sibling_accounts()
+    mapping_mode = len(siblings) > 1 and len(accounts) > 1
     return render_template("pick_account.html", accounts=accounts, active="bank",
-                           picker_session_id=db.get_setting("pending_auth_session_id"))
+                           picker_session_id=db.get_setting("pending_auth_session_id"),
+                           mapping_mode=mapping_mode, siblings=siblings,
+                           error=request.args.get("error"))
+
+def _save_reauth_mapping(session_id, valid_until, mapping):
+    """Refresh session and uid for several accounts of one bank from one auth.
+
+    `mapping` is a list of (account_id, account_uid) pairs already validated
+    against the accounts the new session returned.
+    """
+    bank_name    = db.get_setting("pending_bank_name") or config.EB_BANK_NAME
+    bank_country = db.get_setting("pending_bank_country") or config.EB_BANK_COUNTRY
+    for account_id, account_uid in mapping:
+        db.update_bank_account_field(account_id, "session_id", session_id)
+        db.update_bank_account_field(account_id, "account_uid", account_uid)
+        db.update_bank_account_field(account_id, "session_expiry", valid_until)
+        if bank_name:
+            db.update_bank_account_field(account_id, "bank_name", bank_name)
+        if bank_country:
+            db.update_bank_account_field(account_id, "bank_country", bank_country)
+    for account_id, _uid in mapping:
+        seat_error = _claim_bank_seat(db.get_bank_account(account_id))
+        if seat_error:
+            raise ValueError(seat_error)
+    for key in ["pending_actual_account", "pending_bank_name", "pending_bank_country",
+                "pending_start_sync_date", "pending_session_state", "pending_session_valid_until",
+                "pending_reauth_account_id", "pending_relay_privkey", "pending_relay_pubkey",
+                "pending_session_started_at", "auth_relay_note"]:
+        db.set_setting(key, "")
+    _start_scheduler_if_ready()
+    threading.Thread(target=sync.run, daemon=True).start()
 
 @app.route("/pick-account", methods=["POST"])
 def pick_account_post():
-    account_uid = request.form.get("account_uid")
-    if not account_uid:
-        return redirect(url_for("pick_account"))
+    import json
     session_id  = db.get_setting("pending_auth_session_id")
     valid_until = db.get_setting("pending_auth_valid_until")
     # A picker form from an earlier attempt must not consume a newer
@@ -1110,10 +1181,40 @@ def pick_account_post():
     submitted_session = request.form.get("session_id", "")
     if submitted_session and submitted_session != session_id:
         return redirect(url_for("pick_account"))
-    try:
-        _save_bank_account(session_id, account_uid, valid_until)
-    except Exception as e:
-        return redirect(url_for("bank") + "?error=" + str(e))
+
+    if request.form.get("mapping_mode") == "1":
+        accounts = _decorate_picker_accounts(json.loads(db.get_setting("pending_auth_accounts") or "[]"))
+        valid_uids = {a["_uid"] for a in accounts if a.get("_uid")}
+        siblings = _reauth_sibling_accounts()
+        mapping = []
+        used = set()
+        for a in siblings:
+            uid = (request.form.get("map_%s" % a["id"]) or "").strip()
+            if not uid:
+                continue
+            # Only ever write a uid this session actually returned, and never
+            # point two stored accounts at the same one.
+            if uid not in valid_uids:
+                return redirect(url_for("pick_account") + "?error=That account is no longer part of this authorisation. Please try again.")
+            if uid in used:
+                return redirect(url_for("pick_account") + "?error=Each bank account can only be linked to one Bridge Bank account. Please review your selection.")
+            used.add(uid)
+            mapping.append((a["id"], uid))
+        if not mapping:
+            return redirect(url_for("pick_account") + "?error=Please choose at least one account to reconnect.")
+        try:
+            _save_reauth_mapping(session_id, valid_until, mapping)
+        except Exception as e:
+            return redirect(url_for("bank") + "?error=" + str(e))
+    else:
+        account_uid = request.form.get("account_uid")
+        if not account_uid:
+            return redirect(url_for("pick_account"))
+        try:
+            _save_bank_account(session_id, account_uid, valid_until)
+        except Exception as e:
+            return redirect(url_for("bank") + "?error=" + str(e))
+
     for key in ["pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until"]:
         db.set_setting(key, "")
     return redirect(url_for("status"))

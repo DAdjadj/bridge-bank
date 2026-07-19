@@ -10,6 +10,33 @@
 </div>
 {% endblock %}
 {% block content %}
+{% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+{% if mapping_mode %}
+<div class="card">
+  <div class="card-title">Reconnect your accounts</div>
+  <div class="card-sub">You have more than one account at this bank, and this authorisation covers all of them. Match each Bridge Bank account to the bank account it syncs, so they all reconnect together.</div>
+  <form method="POST">
+    <input type="hidden" name="session_id" value="{{ picker_session_id }}">
+    <input type="hidden" name="mapping_mode" value="1">
+    {% for s in siblings %}
+    <div style="padding:14px 16px; border:1px solid #253450; border-radius:8px; margin-bottom:0.5rem;">
+      <div style="font-size:14px; font-weight:600; color:#e8edf5; margin-bottom:8px;">{{ s.actual_account }}</div>
+      <select name="map_{{ s.id }}" style="width:100%; font-size:13px; padding:8px 10px;">
+        <option value="">Do not reconnect this account</option>
+        {% for acct in accounts %}
+        <option value="{{ acct._uid }}">{{ acct._label }}{% if acct.currency %} ({{ acct.currency }}){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endfor %}
+    <div style="font-size:11px; color:#4a5568; margin:0.5rem 0 1rem;">Each bank account can only be linked to one Bridge Bank account. Anything left unselected keeps its current connection and may stop syncing.</div>
+    <button class="btn btn-primary" type="submit">Reconnect accounts &rarr;</button>
+  </form>
+</div>
+{% else %}
 <div class="card">
   <div class="card-title">Choose an account</div>
   <div class="card-sub">Your bank returned multiple accounts. Select which one to connect.</div>
@@ -30,4 +57,5 @@
     <button class="btn btn-primary" type="submit">Connect this account &rarr;</button>
   </form>
 </div>
+{% endif %}
 {% endblock %}
