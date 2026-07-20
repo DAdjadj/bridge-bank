@@ -66,6 +66,24 @@ jobs:
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
 
+      # Publish a GitHub Release for the new tag so deployment tools (Komodo,
+      # Docker Scout, etc.) can surface release notes. Non-fatal: a release
+      # failure must never break the image build or the deploy below.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ steps.version.outputs.version }}"
+          PREV=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || echo "")
+          if [ -n "$PREV" ]; then
+            git log --no-merges --pretty=format:'- %s' "${PREV}..${VERSION}" > /tmp/notes.md
+          else
+            git log -1 --no-merges --pretty=format:'- %s' "${VERSION}" > /tmp/notes.md
+          fi
+          [ -s /tmp/notes.md ] || echo "- Maintenance release" > /tmp/notes.md
+          gh release create "$VERSION" --title "$VERSION" --notes-file /tmp/notes.md --verify-tag \
+            || echo "Release step skipped (it may already exist)."
+
       - name: Deploy to server
         if: github.ref == 'refs/heads/main'
         run: |

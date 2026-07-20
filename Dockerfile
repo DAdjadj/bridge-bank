@@ -8,5 +8,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}
+LABEL org.opencontainers.image.source="https://github.com/DAdjadj/bridge-bank" \
+      org.opencontainers.image.title="Bridge Bank" \
+      org.opencontainers.image.description="Sync your bank transactions into Actual Budget" \
+      org.opencontainers.image.url="https://bridgebank.app" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${APP_VERSION}"
 EXPOSE 3000
 CMD ["python", "-u", "main.py"]
