@@ -94,6 +94,7 @@
           </div>
         </div>
         <div style="display:flex;gap:6px;">
+          <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;" onclick="syncAccount({{ a.id }}, this)">Sync now</button>
           {% if a.sync_mode != 'balance' %}
           <div>
             <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;" onclick="this.style.display='none';this.nextElementSibling.style.display='flex';" id="reset-btn-{{ a.id }}">Reset sync</button>
@@ -237,6 +238,32 @@
 {% endif %}
 
 <script>
+  // Sync a single bank on demand, without touching the others (avoids hitting
+  // every bank's rate limit when you only need to refresh one).
+  function syncAccount(id, btn) {
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    btn.textContent = 'Syncing...';
+    function reset() { btn.textContent = original; btn.disabled = false; btn.style.opacity = '1'; }
+    var body = new URLSearchParams();
+    body.append('account_id', id);
+    fetch('/sync/account', { method: 'POST', body: body })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.d.ok) { reset(); alert((res.d && res.d.error) || 'Could not start sync.'); return; }
+        var attempts = 0;
+        var poll = setInterval(function () {
+          attempts++;
+          fetch('/api/sync-status').then(function (r) { return r.json(); }).then(function (s) {
+            if (!s.running && attempts > 1) { clearInterval(poll); window.location.href = '/status'; }
+            else if (attempts > 90) { clearInterval(poll); window.location.href = '/status'; }
+          }).catch(function () { if (attempts > 90) { clearInterval(poll); window.location.reload(); } });
+        }, 2000);
+      })
+      .catch(function () { reset(); alert('Could not start sync.'); });
+  }
+
   // While an auth attempt is pending, watch its progress so this tab flips
   // to the result even when the relay (not the browser redirect) finishes it.
   (function () {

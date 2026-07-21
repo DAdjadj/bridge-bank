@@ -1175,7 +1175,15 @@ def bank_label(account):
         return f"{account.get('bank_name', account.get('provider', 'Unknown'))} → {actual_name}"
     return f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) → {actual_name}"
 
-def run():
+def run(only_account_id=None):
+    """Sync all bank accounts, or just one when only_account_id is given.
+
+    A per-account sync still runs the licence and seat checks and the
+    internal-transfer linking (which spans every account, so a freshly synced
+    account can still pair with transactions already imported from the others).
+    Only the fetch-and-import loop is narrowed, which is the part that hits the
+    banks and can trip their rate limits.
+    """
     log.info("Starting sync...")
 
     # License check
@@ -1235,12 +1243,22 @@ def run():
     else:
         db.set_setting("license_bank_limit_error", "")
 
+    if only_account_id is not None:
+        accounts_to_sync = [a for a in all_accounts if a.get("id") == only_account_id]
+        if not accounts_to_sync:
+            msg = "The selected bank account no longer exists."
+            log.error(msg)
+            return False, 0, msg
+        log.info("Syncing only %s", bank_label(accounts_to_sync[0]))
+    else:
+        accounts_to_sync = all_accounts
+
     state = _load_state()
     total_added = 0
     errors = []
     successes = []
 
-    for i, account in enumerate(all_accounts):
+    for i, account in enumerate(accounts_to_sync):
         if i > 0:
             time.sleep(2)
         label = bank_label(account)

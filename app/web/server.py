@@ -1403,6 +1403,28 @@ def sync_now():
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"ok": True})
 
+@app.route("/sync/account", methods=["POST"])
+def sync_account():
+    global _sync_running
+    account_id = request.form.get("account_id", "").strip()
+    try:
+        aid = int(account_id)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Invalid account."}), 400
+    if not db.get_bank_account(aid):
+        return jsonify({"ok": False, "error": "Account not found."}), 404
+    if _sync_running:
+        return jsonify({"ok": False, "error": "A sync is already running. Please wait for it to finish."}), 409
+    _sync_running = True
+    def _run():
+        global _sync_running
+        try:
+            sync.run(only_account_id=aid)
+        finally:
+            _sync_running = False
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True})
+
 @app.route("/api/sync-status")
 def sync_status():
     return jsonify({"running": _sync_running})
