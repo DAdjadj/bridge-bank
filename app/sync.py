@@ -8,7 +8,10 @@ log = logging.getLogger(__name__)
 STATE_FILE = "/data/state.json"
 EB_API     = "https://api.enablebanking.com"
 TRANSFER_MATCH_WINDOW_DAYS = 3
-DUPLICATE_MATCH_WINDOW_DAYS = 7
+# Booked transactions keep their booking date, so a reference-less booking only
+# ever matches its own earlier import on the same day. Anything wider would let
+# a genuine repeat purchase later in the week be swallowed as a duplicate.
+DUPLICATE_MATCH_WINDOW_DAYS = 0
 ACTUAL_RETRY_DELAYS_SECONDS = (15, 60)
 
 def _config_flag(name, default=True):
@@ -362,10 +365,16 @@ def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee
 
     entry_reference is optional in the underlying spec and some banks leave it
     empty, so imported_refs can never remember those bookings and every sync
-    re-adds them. Fall back to the same signals Actual's own importer uses: same
-    account, same amount, closest booking date within a week. Match on
-    imported_description rather than the payee because rules rewrite the payee
-    after import, which would make the second sync miss its own first import.
+    re-adds them. Fall back to same account, same amount, same original payee,
+    same booking date. Match on imported_description rather than the payee
+    because rules rewrite the payee after import, which would make the second
+    sync miss its own first import.
+
+    Two identical purchases on one day are told apart by count rather than by
+    time: neither Actual nor Enable Banking records one, Actual stores a date as
+    20260804. claimed_ids lets each incoming booking claim at most one existing
+    copy, and every sync re-fetches the whole current day, so both bookings are
+    always weighed against the copies together and the surplus gets added.
 
     Only used when there is no reference at all. Bookings that carry one keep
     deduping on it alone, so this cannot merge anything for a bank that works.

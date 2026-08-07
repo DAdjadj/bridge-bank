@@ -48,63 +48,59 @@ class FindImportedDuplicateTest(unittest.TestCase):
         self.assertIsNone(match)
 
     def test_ignores_the_same_amount_from_a_different_payee(self):
-        """Two 12.50 payments in a week are not the same transaction."""
+        """Two 12.50 payments on one day are not the same transaction."""
         existing = [txn("a", -1250, "ALBERT HEIJN 1234", 4)]
 
         match = _find_imported_duplicate(
-            existing, set(), datetime.date(2026, 8, 6), -12.50, "JUMBO 5678"
+            existing, set(), datetime.date(2026, 8, 4), -12.50, "JUMBO 5678"
         )
 
         self.assertIsNone(match)
 
-    def test_ignores_a_booking_outside_the_match_window(self):
-        existing = [txn("a", -1250, "ALBERT HEIJN 1234", 1)]
+    def test_ignores_the_same_purchase_on_a_different_day(self):
+        """The same coffee on Monday and on Tuesday is two coffees, not one."""
+        existing = [txn("a", -250, "CAFE DE PIJP", 4)]
 
         match = _find_imported_duplicate(
-            existing, set(), datetime.date(2026, 8, 12), -12.50, "ALBERT HEIJN 1234"
+            existing, set(), datetime.date(2026, 8, 5), -2.50, "CAFE DE PIJP"
         )
 
         self.assertIsNone(match)
 
-    def test_matches_at_the_edge_of_the_window(self):
-        existing = [txn("a", -1250, "ALBERT HEIJN 1234", 1)]
-
-        match = _find_imported_duplicate(
-            existing, set(), datetime.date(2026, 8, 8), -12.50, "ALBERT HEIJN 1234"
-        )
-
-        self.assertIs(match, existing[0])
-
-    def test_a_repeated_purchase_in_one_batch_claims_each_copy_once(self):
-        """Two identical weekly payments must both survive, not collapse into one."""
+    def test_a_repeated_purchase_on_one_day_claims_each_copy_once(self):
+        """Two identical coffees already imported must not both match one copy."""
         existing = [
-            txn("a", -1250, "ALBERT HEIJN 1234", 4),
-            txn("b", -1250, "ALBERT HEIJN 1234", 6),
+            txn("a", -250, "CAFE DE PIJP", 4),
+            txn("b", -250, "CAFE DE PIJP", 4),
         ]
         claimed = set()
 
         first = _find_imported_duplicate(
-            existing, claimed, datetime.date(2026, 8, 4), -12.50, "ALBERT HEIJN 1234"
+            existing, claimed, datetime.date(2026, 8, 4), -2.50, "CAFE DE PIJP"
         )
         claimed.add(str(first.id))
         second = _find_imported_duplicate(
-            existing, claimed, datetime.date(2026, 8, 6), -12.50, "ALBERT HEIJN 1234"
+            existing, claimed, datetime.date(2026, 8, 4), -2.50, "CAFE DE PIJP"
         )
 
         self.assertIs(first, existing[0])
         self.assertIs(second, existing[1])
 
-    def test_prefers_the_closest_booking_date(self):
-        existing = [
-            txn("far", -1250, "ALBERT HEIJN 1234", 1),
-            txn("near", -1250, "ALBERT HEIJN 1234", 5),
-        ]
+    def test_a_second_purchase_the_same_day_is_added_when_only_one_copy_exists(self):
+        """The surplus booking finds nothing left to claim, so the sync adds it."""
+        existing = [txn("a", -250, "CAFE DE PIJP", 4)]
+        claimed = set()
 
-        match = _find_imported_duplicate(
-            existing, set(), datetime.date(2026, 8, 4), -12.50, "ALBERT HEIJN 1234"
+        first = _find_imported_duplicate(
+            existing, claimed, datetime.date(2026, 8, 4), -2.50, "CAFE DE PIJP"
+        )
+        claimed.add(str(first.id))
+        second = _find_imported_duplicate(
+            existing, claimed, datetime.date(2026, 8, 4), -2.50, "CAFE DE PIJP"
         )
 
-        self.assertEqual(match.id, "near")
+        self.assertIs(first, existing[0])
+        self.assertIsNone(second)
 
     def test_ignores_split_children(self):
         existing = [txn("child", -1250, "ALBERT HEIJN 1234", 4, is_child=1)]
