@@ -8,6 +8,7 @@ log = logging.getLogger(__name__)
 STATE_FILE = "/data/state.json"
 EB_API     = "https://api.enablebanking.com"
 TRANSFER_MATCH_WINDOW_DAYS = 3
+DUPLICATE_MATCH_WINDOW_DAYS = 7
 ACTUAL_RETRY_DELAYS_SECONDS = (15, 60)
 
 def _config_flag(name, default=True):
@@ -355,6 +356,37 @@ def _parse_notes(t):
 
 def _get_entry_ref(t):
     return t.get("entry_reference") or t.get("transaction_id") or ""
+
+def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee):
+    """Find the copy we already imported of a booking the bank gave us no reference for.
+
+    entry_reference is optional in the underlying spec and some banks leave it
+    empty, so imported_refs can never remember those bookings and every sync
+    re-adds them. Fall back to the same signals Actual's own importer uses: same
+    account, same amount, closest booking date within a week. Match on
+    imported_description rather than the payee because rules rewrite the payee
+    after import, which would make the second sync miss its own first import.
+
+    Only used when there is no reference at all. Bookings that carry one keep
+    deduping on it alone, so this cannot merge anything for a bank that works.
+    """
+    target_amount = round(decimal.Decimal(amount) * 100)
+    wanted        = (imported_payee or "").strip()
+    candidates    = []
+    for t in existing:
+        if str(t.id) in claimed_ids or t.is_child:
+            continue
+        if t.amount != target_amount:
+            continue
+        if (t.imported_description or "").strip() != wanted:
+            continue
+        distance = abs((t.get_date() - date).days)
+        if distance <= DUPLICATE_MATCH_WINDOW_DAYS:
+            candidates.append((distance, t))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda pair: pair[0])
+    return candidates[0][1]
 
 def _record_reconciled_transaction(transaction, existing_ids: set[str], new_txn: list) -> str:
     txn_id = str(transaction.id)
@@ -1042,6 +1074,7 @@ def _sync_account(account, state):
                 existing       = list(get_transactions(actual.session, account=account_obj))
                 existing_ids   = {str(t.id) for t in existing}
                 already_matched = existing[:]
+                claimed_ids    = set()
                 new_txn        = []
 
             skip_pending = bool(account.get("skip_pending"))
@@ -1077,6 +1110,7 @@ def _sync_account(account, state):
                                         cleared=False, imported_payee=payee
                                     )
                                 already_matched.append(t)
+                                claimed_ids.add(str(t.id))
                                 result = _record_reconciled_transaction(t, existing_ids, new_txn)
                                 if result != "skipped":
                                     pending_map[key] = str(t.id)
@@ -1107,6 +1141,21 @@ def _sync_account(account, state):
                                     if ref: imported_refs.add(ref)
                                     skipped += 1
                             else:
+                                duplicate = None
+                                if not ref:
+                                    duplicate = _find_imported_duplicate(
+                                        existing, claimed_ids, date, amount, payee
+                                    )
+                                if duplicate is not None:
+                                    claimed_ids.add(str(duplicate.id))
+                                    if not duplicate.cleared:
+                                        duplicate.cleared = True
+                                    result = _record_reconciled_transaction(duplicate, existing_ids, new_txn)
+                                    if result == "updated":
+                                        updated += 1
+                                    else:
+                                        skipped += 1
+                                    continue
                                 try:
                                     t = reconcile_transaction(
                                         actual.session, date, account_obj, payee, notes,
@@ -1120,6 +1169,7 @@ def _sync_account(account, state):
                                         cleared=True, imported_payee=payee
                                     )
                                 already_matched.append(t)
+                                claimed_ids.add(str(t.id))
                                 if ref:
                                     imported_refs.add(ref)
                                 result = _record_reconciled_transaction(t, existing_ids, new_txn)
