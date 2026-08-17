@@ -290,7 +290,13 @@ def _fetch_transactions_once(account_uid, date_from, use_strategy=True):
 def _eb_error_snippet(response):
     """Short, safe extract of an Enable Banking error body for user-facing
     sync-log messages, so failures are diagnosable from the Status page
-    without a full log download."""
+    without a full log download.
+
+    The bank's own complaint arrives nested under "detail", while the top
+    level only names Enable Banking's category for it. Openbank NL sends
+    {"error": "ASPSP_ERROR", "detail": {"message": "Invalid status value"}},
+    and reporting just "ASPSP_ERROR" names the messenger rather than the
+    fault, so the nested message is appended when there is one."""
     if response is None:
         return ""
     try:
@@ -299,11 +305,20 @@ def _eb_error_snippet(response):
         return ""
     if not isinstance(data, dict):
         return ""
+    parts = []
     for key in ("code", "error", "detail", "message"):
         val = data.get(key)
         if isinstance(val, str) and val.strip():
-            return ": " + val.strip()[:160]
-    return ""
+            parts.append(val.strip())
+            break
+    detail = data.get("detail")
+    if isinstance(detail, dict):
+        nested = detail.get("message")
+        if isinstance(nested, str) and nested.strip() and nested.strip() not in parts:
+            parts.append(nested.strip())
+    if not parts:
+        return ""
+    return ": " + ": ".join(parts)[:160]
 
 def _fetch_failure_message(bank_label, exc):
     """User-facing sync-log message for a failed Enable Banking fetch.
@@ -319,9 +334,14 @@ def _fetch_failure_message(bank_label, exc):
         return f"{bank_label}: Your bank session has expired. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."
     if isinstance(exc, requests.HTTPError):
         detail = _eb_error_snippet(response)
+        # Deliberately does not offer re-authorisation. A refusal that is not
+        # 401/403 is the bank rejecting the request itself, so a fresh SCA
+        # cannot clear it, and sending users to re-authorise burns their SCA
+        # and makes them think they broke something.
         return (f"{bank_label}: Your bank refused the request (error {status}{detail}). "
-                "If this repeats, click 'Re-authorise bank' on the Bank page and send your logs "
-                "from the Status page to support@bridgebank.app.")
+                "This is a fault at the bank rather than an expired login, so reconnecting "
+                "will not clear it. Bridge Bank will retry on the next scheduled sync. If it "
+                "keeps repeating, send your logs from the Status page to support@bridgebank.app.")
     return (f"{bank_label}: Could not reach your bank's API ({type(exc).__name__}). "
             "Bridge Bank will retry on the next scheduled sync.")
 

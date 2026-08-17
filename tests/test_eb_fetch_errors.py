@@ -45,6 +45,28 @@ class FetchFailureMessageTest(unittest.TestCase):
         self.assertIn("Session status is not authorized", msg)
         self.assertIn("send your logs", msg)
 
+    def test_bank_side_refusal_does_not_send_users_to_reconnect(self):
+        # A non-401/403 refusal is the bank rejecting the request, so a fresh
+        # SCA cannot clear it and must not be suggested.
+        msg = _fetch_failure_message(
+            "Openbank (NL) → Openbank",
+            _http_error(400, body={"code": 400, "message": "Error interacting with ASPSP",
+                                   "detail": {"message": "Invalid status value"},
+                                   "error": "ASPSP_ERROR"}))
+        self.assertNotIn("Re-authorise", msg)
+        self.assertNotIn("re-authorise", msg.lower())
+        self.assertIn("retry on the next scheduled sync", msg)
+
+    def test_nested_bank_detail_reaches_the_message(self):
+        # "ASPSP_ERROR" alone names Enable Banking's category, not the fault.
+        msg = _fetch_failure_message(
+            "Openbank (NL) → Openbank",
+            _http_error(400, body={"code": 400, "message": "Error interacting with ASPSP",
+                                   "detail": {"message": "Invalid status value"},
+                                   "error": "ASPSP_ERROR"}))
+        self.assertIn("ASPSP_ERROR", msg)
+        self.assertIn("Invalid status value", msg)
+
     def test_network_error_does_not_blame_the_session(self):
         msg = _fetch_failure_message("ING (NL) → ING Prive", requests.ConnectionError("boom"))
         self.assertIn("Could not reach your bank's API", msg)

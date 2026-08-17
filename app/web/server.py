@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+from urllib.parse import quote
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from .. import config, db, licence, sync
 
@@ -963,11 +964,42 @@ NO_ACCOUNTS_ERROR = ("Your bank did not return any accounts. This may happen if 
                      "supported by your bank through open banking. Please try again and make sure "
                      "to approve access to at least one account.")
 
-def _mark_auth_cancelled():
+GENERIC_CANCEL_MESSAGE = "Bank connection was cancelled or denied."
+
+# OAuth codes that genuinely mean "the person said no", as opposed to the bank
+# refusing the request on its own account.
+USER_CANCEL_ERRORS = {"auth_cancelled", "access_denied", "cancelled", "user_cancelled"}
+
+def _auth_refusal_message(error="", detail=""):
+    """User-facing reason an auth attempt came back without a code.
+
+    Anything that is not an explicit cancellation is the bank refusing, and
+    saying which one it was matters: a blanket "cancelled or denied" reads as
+    user error, and sends people back to re-authorise a connection the bank is
+    actively rejecting."""
+    reason = (detail or "").strip() or (error or "").strip()
+    if not reason or reason in USER_CANCEL_ERRORS:
+        return GENERIC_CANCEL_MESSAGE
+    return ("Your bank refused the connection (%s). That is a refusal at the bank rather than "
+            "a Bridge Bank error, so trying again straight away usually fails the same way. "
+            "Wait a while, check whether your bank lists Enable Banking under its third-party "
+            "access settings, then try once more." % reason[:160])
+
+def _mark_auth_cancelled(error="", detail=""):
+    message = _auth_refusal_message(error, detail)
     if db.compare_and_swap_setting("auth_flow_status", "pending", "in_progress"):
         db.set_setting("auth_flow_outcome", "cancelled")
-        db.set_setting("auth_flow_message", "Bank connection was cancelled or denied.")
+        db.set_setting("auth_flow_message", message)
         db.set_setting("auth_flow_status", "done")
+        return
+    # The relay poller usually wins this race, and it can only ever report a
+    # generic cancellation. The browser redirect is the one carrying the bank's
+    # reason, so let it replace that message instead of losing the only
+    # diagnosis this failure produces.
+    if (message != GENERIC_CANCEL_MESSAGE
+            and db.get_setting("auth_flow_status") == "done"
+            and db.get_setting("auth_flow_outcome") == "cancelled"):
+        db.set_setting("auth_flow_message", message)
 
 def _complete_auth_from_code(code, state, source="web"):
     """Single entry point for finishing a bank auth, shared by the browser
@@ -1051,13 +1083,19 @@ def callback():
     state = request.args.get("state", "")
     error = request.args.get("error")
     if error or not code:
-        logger.warning("Callback received error=%s code=%s", error, bool(code))
+        detail = request.args.get("error_description", "")
+        logger.warning("Callback received error=%s detail=%s code=%s", error, detail or "-", bool(code))
         # Only cancel the pending attempt when the request proves it belongs to
         # it (state match); a stray or forged hit must not kill a live auth.
         cancel_id = state.split("|")[-1] if state else ""
         if cancel_id and cancel_id == db.get_setting("auth_flow_state_id"):
-            _mark_auth_cancelled()
-        return redirect(url_for("bank") + "?error=Bank connection was cancelled or denied. Please try again.")
+            _mark_auth_cancelled(error, detail)
+        message = _auth_refusal_message(error, detail)
+        if message == GENERIC_CANCEL_MESSAGE:
+            message += " Please try again."
+        # The bank's own text lands in here, so it has to be encoded: a stray
+        # "&" or "#" would otherwise cut the message off at that character.
+        return redirect(url_for("bank") + "?error=" + quote(message))
     outcome, message = _complete_auth_from_code(code, state, source="web")
     if outcome == "success":
         return redirect(url_for("status"))
@@ -1070,7 +1108,10 @@ def callback():
     if outcome == "stale":
         return redirect(url_for("bank") + "?error=This bank connection link has expired. Please start the connection again.")
     if outcome == "cancelled":
-        return redirect(url_for("bank") + "?error=Bank connection was cancelled or denied. Please try again.")
+        # Prefer the reason recorded when the attempt was cancelled; it may
+        # carry the bank's own refusal text, which is more use than the
+        # generic wording.
+        return redirect(url_for("bank") + "?error=" + quote(message or (GENERIC_CANCEL_MESSAGE + " Please try again.")))
     return redirect(url_for("bank") + "?error=Bank connection failed: " + (message or "unknown error") + ". If this keeps happening, please download your logs from the Status page and send them to support@bridgebank.app.")
 
 def _account_uid_of(acct):
