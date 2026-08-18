@@ -47,6 +47,7 @@ Enable Banking is the regulated open banking provider that connects Bridge Bank 
 1. Sign up at [enablebanking.com](https://enablebanking.com)
 2. Go to **API applications** and click **Register new application**
 3. Fill in the form:
+   - **Mode:** Production (not Sandbox)
    - **Application name:** Bridge Bank
    - **Allowed redirect URLs:** `https://bridgebank.app/callback`
    - **Application description:** Connect Actual Budget with my bank
@@ -57,6 +58,8 @@ Enable Banking is the regulated open banking provider that connects Bridge Bank 
 5. Click **Activate by linking accounts** on your application page
 6. Select your country and bank from the dropdowns and click **Link**
 7. Follow the steps to log in to your bank and approve read-only access — this activates your Enable Banking app
+
+> **The mode is permanent.** Enable Banking asks for Sandbox or Production at the top of the registration form, and applications cannot be moved between the two afterwards. A Sandbox application only returns simulated test data, so it will never connect to your real bank. If you already registered one in Sandbox, register a second application in Production and use that one.
 
 ### 3. Install Bridge Bank
 
