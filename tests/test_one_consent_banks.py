@@ -368,6 +368,127 @@ class RebindRouteTest(_IsolatedDbTest):
         self.assertEqual(appdb.get_setting("pending_auth_session_id"), "")
 
 
+class AddFromExistingConnectionTest(_IsolatedDbTest):
+    """Adding a second account must not buy a second authorisation.
+
+    The stored session already covers every account at that bank, so the ones
+    not connected yet can be taken from it. Authorising again to reach them is
+    what revokes the connection the first account is using.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.existing = _add("Openbank", session="sess-a", uid="new-a")
+        self.seat = patch.object(server, "_claim_bank_seat", return_value=None)
+        self.capacity = patch.object(server, "_ensure_global_bank_capacity", return_value=None)
+        self.names = patch.object(server, "_actual_account_names", return_value=[])
+        self.sched = patch.object(server, "_start_scheduler_if_ready")
+        self.thread = patch("app.web.server.threading.Thread")
+        for p in (self.seat, self.capacity, self.names, self.sched, self.thread):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _session(self, accounts=None):
+        return {
+            "session_id": "sess-a",
+            "status": "AUTHORIZED",
+            "accounts": accounts if accounts is not None else [{"uid": "new-a"}, {"uid": "new-b"}],
+            "valid_until": "2027-03-07T10:24:32",
+        }
+
+    def _add_from(self, session=None, error=None, form=None):
+        kwargs = ({"side_effect": error} if error is not None
+                  else {"return_value": session if session is not None else self._session()})
+        data = {"bank_name": "Openbank", "bank_country": "NL"}
+        data.update(form or {})
+        with patch("app.enablebanking.get_session", **kwargs) as get_session:
+            resp = self.client.post("/bank/add-from-connection", data=data)
+        return get_session, resp
+
+    def test_offers_only_the_accounts_not_connected_yet(self):
+        get_session, resp = self._add_from()
+        get_session.assert_called_once_with("sess-a")
+        self.assertIn("/pick-account", resp.headers["Location"])
+        self.assertEqual(json.loads(appdb.get_setting("pending_auth_accounts")), [{"uid": "new-b"}])
+        self.assertEqual(appdb.get_setting("pending_auth_session_id"), "sess-a")
+        self.assertEqual(appdb.get_setting("pending_add_from_session"), "1")
+        # Nothing is being re-authorised, so the picker must not open in
+        # mapping mode and repoint the account that already works.
+        self.assertEqual(appdb.get_setting("pending_reauth_account_id"), "")
+
+    def test_picker_offers_a_single_leftover_account(self):
+        # One account left is the ordinary case, and the plain single-account
+        # picker has no field for its Actual Budget name.
+        self._add_from()
+        body = self.client.get("/pick-account").get_data(as_text=True)
+        self.assertIn("Add another account", body)
+        self.assertIn('name="multi_mode"', body)
+        self.assertIn('value="new-b"', body)
+        self.assertIn("needs no new bank login", body)
+
+    def test_connecting_it_keeps_both_accounts_on_one_session(self):
+        self._add_from(form={"start_sync_date": "2026-09-01"})
+        self.client.post("/pick-account", data={
+            "session_id": "sess-a", "multi_mode": "1",
+            "account_uid": ["new-b"], "actual_new-b": "Openbank Betaal",
+        })
+        rows = appdb.get_all_bank_accounts()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["session_id"] for r in rows}, {"sess-a"})
+        self.assertEqual({r["account_uid"] for r in rows}, {"new-a", "new-b"})
+        # The state this whole feature exists to avoid.
+        self.assertEqual(server._split_session_banks(rows), [])
+        added = [r for r in rows if r["account_uid"] == "new-b"][0]
+        self.assertEqual(added["actual_account"], "Openbank Betaal")
+        self.assertEqual(added["start_sync_date"], "2026-09-01")
+        self.assertEqual(added["session_expiry"], "2027-03-07T10:24:32")
+
+    def test_the_uid_already_connected_cannot_be_connected_twice(self):
+        self._add_from()
+        self.client.post("/pick-account", data={
+            "session_id": "sess-a", "multi_mode": "1",
+            "account_uid": ["new-a"], "actual_new-a": "Openbank Again",
+        })
+        self.assertEqual(len(appdb.get_all_bank_accounts()), 1)
+
+    def test_nothing_left_to_add_says_so(self):
+        _, resp = self._add_from(session=self._session(accounts=[{"uid": "new-a"}]))
+        self.assertIn("/bank", resp.headers["Location"])
+        self.assertIn("error=", resp.headers["Location"])
+        self.assertEqual(appdb.get_setting("pending_auth_accounts"), "")
+
+    def test_unreadable_session_sends_the_user_back(self):
+        import requests
+        _, resp = self._add_from(error=requests.HTTPError("401 Unauthorized"))
+        self.assertIn("error=", resp.headers["Location"])
+        self.assertEqual(appdb.get_setting("pending_auth_accounts"), "")
+
+    def test_bank_with_no_connection_is_refused(self):
+        _reset()
+        _, resp = self._add_from()
+        self.assertIn("error=", resp.headers["Location"])
+        self.assertEqual(appdb.get_setting("pending_auth_accounts"), "")
+
+    def test_seat_limit_is_reported_before_the_picker(self):
+        with patch.object(server, "_ensure_global_bank_capacity",
+                          return_value="Bank account limit reached (2)."):
+            _, resp = self._add_from()
+        self.assertIn("/bank", resp.headers["Location"])
+        self.assertIn("error=", resp.headers["Location"])
+        self.assertEqual(appdb.get_setting("pending_auth_accounts"), "")
+
+
+class ConnectedBanksTest(_IsolatedDbTest):
+    def test_lists_each_connected_bank_once(self):
+        _add("Openbank", session="sess-a")
+        _add("Openbank Betaal", session="sess-a")
+        _add("ING", bank="ING", session="ing-sess")
+        _add("eToro", bank="eToro", country="", session="", sync_mode="balance")
+        self.assertEqual(server._connected_banks(appdb.get_all_bank_accounts()),
+                         [{"name": "Openbank", "country": "NL"},
+                          {"name": "ING", "country": "NL"}])
+
+
 class BankPageTest(_IsolatedDbTest):
     def test_split_bank_offers_the_rebind_button(self):
         _add("Openbank Betaal", session="sess-old", expiry="2027-03-07T10:24:32")
@@ -380,6 +501,17 @@ class BankPageTest(_IsolatedDbTest):
         self.assertIn("/bank/rebind", body)
         self.assertIn("Re-bind to the newest connection", body)
         self.assertIn("accounts are on different connections", body)
+
+    def test_connect_form_knows_which_banks_are_already_connected(self):
+        _add("Openbank", session="sess-a")
+        appdb.set_setting("eb_pem_content", "-----BEGIN PRIVATE KEY-----")
+        with patch.object(server, "_get_bank_seat_error", return_value=(None, {"used": 1, "limit": 2})), \
+             patch.object(server, "_get_days_left", return_value=300), \
+             patch.object(server, "_last_run_failure_messages", return_value=[]):
+            body = self.client.get("/bank").get_data(as_text=True)
+        self.assertIn('"name": "Openbank"', body)
+        self.assertIn("/bank/add-from-connection", body)
+        self.assertIn("revoke the first", body)
 
 
 if __name__ == "__main__":

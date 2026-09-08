@@ -194,6 +194,12 @@
         <button type="button" onclick="clearBank()" style="background:none;border:none;color:#4a5568;cursor:pointer;font-size:11px;padding:0;">clear</button>
       </div>
       <div class="field-hint">2,500+ banks across 29 European countries.</div>
+      <div id="existing-connection" style="display:none;margin-top:0.75rem;padding:12px 14px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.35);border-radius:8px;">
+        <div style="font-size:12px;color:#94a3b8;line-height:1.5;">
+          You already have <span id="existing-bank-label" style="color:#fbbf24;font-weight:600;"></span> connected. Authorising it again creates a second connection, and banks that allow only one active connection revoke the first, which stops your existing accounts syncing. If the account you want is covered by the connection you already have, add it from there instead.
+        </div>
+        <button type="submit" formaction="/bank/add-from-connection" formnovalidate class="btn btn-ghost" style="margin-top:10px;font-size:11px;padding:6px 10px;">Add an account from the existing connection</button>
+      </div>
       <button class="btn btn-primary" type="submit" id="connect-btn" disabled style="background:var(--surface2); opacity:0.5;">Add bank &rarr;</button>
     </form>
     </div>
@@ -310,6 +316,17 @@
   })();
 
   let allBanks = [];
+  const connectedBanks = {{ connected_banks | default([]) | tojson }};
+
+  function flagExistingConnection(name, country) {
+    const box = document.getElementById('existing-connection');
+    if (!box) return;
+    const known = connectedBanks.some(b => b.name === name && b.country === country);
+    box.style.display = known ? 'block' : 'none';
+    if (known) {
+      document.getElementById('existing-bank-label').textContent = name + ' (' + country + ')';
+    }
+  }
 
   async function loadBanks() {
     try {
@@ -371,6 +388,7 @@
     // Auto-fill account name with bank name
     var accountField = document.getElementById('actual-account-input');
     if (accountField && !accountField.value.trim()) accountField.value = name;
+    flagExistingConnection(name, country);
     checkReady();
   }
 
@@ -379,6 +397,7 @@
     document.getElementById('inp-bank-country').value = '';
     document.getElementById('bank-search').value = '';
     document.getElementById('selected-bank').style.display = 'none';
+    flagExistingConnection('', '');
     checkReady();
   }
 

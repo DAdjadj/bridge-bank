@@ -227,6 +227,21 @@ def _split_session_banks(accounts):
         })
     return split
 
+def _connected_banks(accounts):
+    """Banks that already hold an authorisation, newest-first per bank.
+
+    The connect form warns on these: authorising a bank a second time creates
+    a second consent, and the banks that allow only one revoke the first.
+    """
+    seen = []
+    for a in accounts:
+        if a.get("sync_mode") == "balance" or not a.get("session_id"):
+            continue
+        entry = {"name": a.get("bank_name") or "", "country": a.get("bank_country") or ""}
+        if entry not in seen:
+            seen.append(entry)
+    return seen
+
 def _actual_account_names():
     """Account names from Actual Budget; empty when it cannot be reached."""
     try:
@@ -832,7 +847,8 @@ def bank():
                         "pending_bank_country", "pending_reauth_account_id",
                         "pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until",
                         "pending_session_state", "pending_relay_privkey", "pending_relay_pubkey",
-                        "pending_session_started_at", "auth_relay_note", "pending_rebind"]:
+                        "pending_session_started_at", "auth_relay_note", "pending_rebind",
+                        "pending_add_from_session"]:
                 db.set_setting(key, "")
             return redirect(url_for("bank"))
 
@@ -866,6 +882,7 @@ def bank():
         released=released,
         bank_seat_error=bank_seat_error,
         split_banks=_split_session_banks(all_accounts),
+        connected_banks=_connected_banks(all_accounts),
         picker_pending=bool(db.get_setting("pending_auth_accounts")),
         auth_url=auth_url,
         all_accounts=all_accounts,
@@ -944,6 +961,7 @@ def reauthorise():
         auth_url=auth_url,
         bank_seat_error=bank_seat_error,
         split_banks=_split_session_banks(all_accounts),
+        connected_banks=_connected_banks(all_accounts),
         all_accounts=all_accounts,
         pem_ready=True,
         eb_app_id=config.EB_APPLICATION_ID or db.get_setting("eb_app_id"),
@@ -1005,6 +1023,60 @@ def rebind():
     db.set_setting("pending_rebind", "1")
     return redirect(url_for("pick_account"))
 
+@app.route("/bank/add-from-connection", methods=["POST"])
+def add_from_connection():
+    """Connect another account using the authorisation this bank already has.
+
+    A second authorisation is exactly what breaks a bank that allows only one
+    active consent, and the stored session usually already covers every
+    account the user holds there. So the accounts that are not connected yet
+    are picked off that session instead of being bought with a new SCA.
+    """
+    bank_name    = request.form.get("bank_name", "").strip()
+    bank_country = request.form.get("bank_country", "").strip()
+    rows = [a for a in db.get_all_bank_accounts()
+            if a.get("sync_mode") != "balance"
+            and a.get("bank_name") == bank_name
+            and a.get("bank_country") == bank_country
+            and a.get("session_id")]
+    if not rows:
+        return redirect(url_for("bank") + "?error=" + quote(
+            "There is no existing connection at this bank to add an account from."))
+    newest = max(rows, key=_session_rank)
+    try:
+        from .. import enablebanking
+        session = enablebanking.get_session(newest["session_id"])
+    except Exception as e:
+        logger.error("Could not read session %s to add an account: %s", newest["session_id"], e)
+        return redirect(url_for("bank") + "?error=" + quote(
+            "Could not read your existing connection at this bank (%s). Connect the bank "
+            "again to authorise a new one." % e))
+    taken = {r.get("account_uid") for r in rows}
+    unused = [a for a in (session.get("accounts") or [])
+              if _account_uid_of(a) and _account_uid_of(a) not in taken]
+    if not unused:
+        return redirect(url_for("bank") + "?error=" + quote(
+            "Every account covered by your existing %s connection is already connected. "
+            "Connecting a different one needs a new authorisation, which at a bank that "
+            "allows only one active connection would revoke this one." % bank_name))
+    capacity_error = _ensure_global_bank_capacity(db.get_all_bank_accounts(), new_seats=1)
+    if capacity_error:
+        return redirect(url_for("bank") + "?error=" + quote(capacity_error))
+    import json
+    # No pending re-auth: these become new accounts, so the picker offers them
+    # the same way it offers the accounts of a fresh authorisation.
+    db.set_setting("pending_reauth_account_id", "")
+    db.set_setting("pending_actual_account", "")
+    db.set_setting("pending_start_sync_date", request.form.get("start_sync_date", "").strip())
+    db.set_setting("pending_bank_name", bank_name)
+    db.set_setting("pending_bank_country", bank_country)
+    db.set_setting("pending_auth_session_id", newest["session_id"])
+    db.set_setting("pending_auth_accounts", json.dumps(unused))
+    db.set_setting("pending_auth_valid_until",
+                   session.get("valid_until") or newest.get("session_expiry") or "")
+    db.set_setting("pending_add_from_session", "1")
+    return redirect(url_for("pick_account"))
+
 # ---------------------------------------------------------------------------
 # OAuth callback
 # ---------------------------------------------------------------------------
@@ -1046,7 +1118,8 @@ def _save_bank_account(session_id, account_uid, valid_until):
     for key in ["pending_actual_account", "pending_bank_name", "pending_bank_country",
                 "pending_start_sync_date", "pending_session_state", "pending_session_valid_until",
                 "pending_reauth_account_id", "pending_relay_privkey", "pending_relay_pubkey",
-                "pending_session_started_at", "auth_relay_note", "pending_rebind"]:
+                "pending_session_started_at", "auth_relay_note", "pending_rebind",
+                "pending_add_from_session"]:
         db.set_setting(key, "")
     _start_scheduler_if_ready()
     threading.Thread(target=sync.run, daemon=True).start()
@@ -1094,7 +1167,8 @@ def _save_bank_accounts(session_id, selections, valid_until):
     for key in ["pending_actual_account", "pending_bank_name", "pending_bank_country",
                 "pending_start_sync_date", "pending_session_state", "pending_session_valid_until",
                 "pending_reauth_account_id", "pending_relay_privkey", "pending_relay_pubkey",
-                "pending_session_started_at", "auth_relay_note", "pending_rebind"]:
+                "pending_session_started_at", "auth_relay_note", "pending_rebind",
+                "pending_add_from_session"]:
         db.set_setting(key, "")
     _start_scheduler_if_ready()
     threading.Thread(target=sync.run, daemon=True).start()
@@ -1325,11 +1399,17 @@ def pick_account():
     # Nothing stored to re-authorise means this is a first connection, and
     # every account the bank returned can be taken from this one authorisation
     # instead of costing an authorisation each.
-    multi_mode = not siblings and len(accounts) > 1
+    # Adding from a connection the user already has must reach the same screen
+    # even when a single account is left over, since that flow has no Actual
+    # Budget account name behind it yet.
+    adding_from_session = db.get_setting("pending_add_from_session") == "1"
+    multi_mode = not siblings and (len(accounts) > 1 or adding_from_session)
     return render_template("pick_account.html", accounts=accounts, active="bank",
                            picker_session_id=db.get_setting("pending_auth_session_id"),
                            mapping_mode=mapping_mode, siblings=siblings,
                            multi_mode=multi_mode, rebinding=rebinding,
+                           adding_from_session=adding_from_session,
+                           pending_bank_name=db.get_setting("pending_bank_name"),
                            default_actual=db.get_setting("pending_actual_account"),
                            error=request.args.get("error"))
 
@@ -1356,7 +1436,8 @@ def _save_reauth_mapping(session_id, valid_until, mapping):
     for key in ["pending_actual_account", "pending_bank_name", "pending_bank_country",
                 "pending_start_sync_date", "pending_session_state", "pending_session_valid_until",
                 "pending_reauth_account_id", "pending_relay_privkey", "pending_relay_pubkey",
-                "pending_session_started_at", "auth_relay_note", "pending_rebind"]:
+                "pending_session_started_at", "auth_relay_note", "pending_rebind",
+                "pending_add_from_session"]:
         db.set_setting(key, "")
     _start_scheduler_if_ready()
     threading.Thread(target=sync.run, daemon=True).start()

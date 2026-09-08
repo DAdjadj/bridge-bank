@@ -38,8 +38,8 @@
 </div>
 {% elif multi_mode %}
 <div class="card">
-  <div class="card-title">Choose your accounts</div>
-  <div class="card-sub">This one authorisation covers every account below. Select all of the ones you want to sync now: adding another later needs a new authorisation, and some banks revoke the previous one when that happens.</div>
+  <div class="card-title">{% if adding_from_session %}Add another account{% else %}Choose your accounts{% endif %}</div>
+  <div class="card-sub">{% if adding_from_session %}Your existing {{ pending_bank_name }} connection already covers {% if accounts|length == 1 %}this account, and it is{% else %}these accounts, and they are{% endif %} not connected yet. Adding {% if accounts|length == 1 %}it{% else %}them{% endif %} from here needs no new bank login, so the connection you already have keeps working.{% else %}This one authorisation covers every account below. Select all of the ones you want to sync now: adding another later needs a new authorisation, and some banks revoke the previous one when that happens.{% endif %}</div>
   <form method="POST">
     <input type="hidden" name="session_id" value="{{ picker_session_id }}">
     <input type="hidden" name="multi_mode" value="1">
@@ -58,7 +58,7 @@
     {% endfor %}
     <datalist id="actual-accounts"></datalist>
     <div style="font-size:11px; color:#4a5568; margin:0.5rem 0 1rem;">Each account syncs into its own account in Actual Budget, and each one uses a bank slot from your licence.</div>
-    <button class="btn btn-primary" type="submit">Connect selected accounts &rarr;</button>
+    <button class="btn btn-primary" type="submit">{% if accounts|length == 1 %}Connect this account{% else %}Connect selected accounts{% endif %} &rarr;</button>
   </form>
 </div>
 <script>
