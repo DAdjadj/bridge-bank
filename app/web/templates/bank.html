@@ -74,6 +74,19 @@
     {% if all_accounts %}
     <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;margin-bottom:0.5rem;">Connected accounts ({{ bank_seat_usage }}/{{ bank_account_limit }} across all machines)</div>
     <div style="font-size:11px;color:#4a5568;margin-bottom:0.75rem;">Reset sync re-imports transactions from the start date. Existing transactions won't be duplicated.</div>
+    {% for s in split_banks or [] %}
+    <div style="margin-bottom:0.75rem;padding:12px 14px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.35);border-radius:8px;">
+      <div style="font-size:13px;font-weight:600;color:#fbbf24;">{{ s.bank_name }}{% if s.bank_country %} ({{ s.bank_country }}){% endif %}: accounts are on different connections</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.5;">
+        {{ s.stale_names | join(', ') }} {% if s.stale_names | length == 1 %}is{% else %}are{% endif %} on an older connection than {{ s.newest_account }}. Banks that allow only one active connection revoke the older one, which stops those accounts syncing. Re-binding moves them onto the newest connection, and needs no new bank login.
+      </div>
+      <form method="POST" action="/bank/rebind" style="margin-top:10px;">
+        <input type="hidden" name="bank_name" value="{{ s.bank_name }}">
+        <input type="hidden" name="bank_country" value="{{ s.bank_country }}">
+        <button type="submit" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;">Re-bind to the newest connection</button>
+      </form>
+    </div>
+    {% endfor %}
     {% for a in all_accounts %}
     <div style="margin-bottom:0.75rem;padding:12px 14px;border:1px solid #253450;border-radius:8px;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
