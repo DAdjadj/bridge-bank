@@ -10,7 +10,8 @@ from unittest.mock import patch, MagicMock
 
 import requests
 
-from app.sync import _fetch_failure_message, _eb_error_snippet, _fetch_transactions
+from app.sync import (_fetch_failure_message, _eb_error_snippet, _fetch_transactions,
+                      _eb_nested_detail, _eb_probe_detail_snippet)
 
 
 def _http_error(status, body=None, text=""):
@@ -82,6 +83,118 @@ class FetchFailureMessageTest(unittest.TestCase):
         self.assertEqual(_eb_error_snippet(resp), ": SESSION_EXPIRED")
         resp.json.side_effect = ValueError()
         self.assertEqual(_eb_error_snippet(resp), "")
+
+
+class RevokedConsentTest(unittest.TestCase):
+    """A consent the bank revoked arrives as a bare ASPSP_ERROR.
+
+    Openbank NL answers the transactions endpoint with detail:null and only
+    names the fault on /details, so the message the user sees identifies
+    nothing. And unlike other ASPSP errors this one is cleared by reconnecting,
+    so the "reconnecting will not clear it" wording is wrong for it.
+    """
+
+    OPENBANK_TRANSACTIONS = {"code": 400, "message": "Error interacting with ASPSP",
+                             "error": "ASPSP_ERROR", "detail": None}
+    OPENBANK_DETAILS = {"code": 400, "message": "Error interacting with ASPSP",
+                        "detail": {"message": "Unauthorized, authentication failure",
+                                   "error_name": "HttpException"},
+                        "error": "ASPSP_ERROR"}
+
+    def _probe_response(self, body):
+        r = MagicMock()
+        r.ok = False
+        r.status_code = 400
+        r.json.return_value = body
+        return r
+
+    def _message(self, account=None, newer_session=False, probe=None):
+        with patch("app.sync.requests.get", return_value=probe) as get, \
+             patch("app.sync._make_headers", return_value={}), \
+             patch("app.sync._bank_has_newer_session", return_value=newer_session):
+            msg = _fetch_failure_message(
+                "Openbank (NL) → Openbank Betaal",
+                _http_error(400, body=self.OPENBANK_TRANSACTIONS),
+                account=account)
+        return msg, get
+
+    def test_null_detail_is_filled_in_from_the_details_endpoint(self):
+        msg, get = self._message(account={"id": 1, "account_uid": "uid-a"},
+                                 probe=self._probe_response(self.OPENBANK_DETAILS))
+        self.assertIn("Unauthorized, authentication failure", msg)
+        self.assertIn("/accounts/uid-a/details", get.call_args.args[0])
+
+    def test_authentication_failure_asks_for_a_reconnection(self):
+        msg, _ = self._message(account={"id": 1, "account_uid": "uid-a"},
+                               probe=self._probe_response(self.OPENBANK_DETAILS))
+        self.assertIn("Re-authorise", msg)
+        self.assertNotIn("will not clear it", msg)
+
+    def test_a_newer_session_at_the_bank_points_at_rebinding(self):
+        # Re-authorising here would revoke the session the other account is
+        # using, so the repair has to be the one that spends no SCA.
+        msg, _ = self._message(account={"id": 1, "account_uid": "uid-a"},
+                               newer_session=True,
+                               probe=self._probe_response(self.OPENBANK_DETAILS))
+        self.assertIn("Re-bind to the newest connection", msg)
+        self.assertNotIn("Re-authorise", msg)
+
+    def test_probe_is_skipped_when_the_bank_already_named_the_fault(self):
+        with patch("app.sync.requests.get") as get, \
+             patch("app.sync._make_headers", return_value={}), \
+             patch("app.sync._bank_has_newer_session", return_value=False):
+            msg = _fetch_failure_message(
+                "Openbank (NL) → Openbank",
+                _http_error(400, body={"error": "ASPSP_ERROR",
+                                       "detail": {"message": "Invalid status value"}}),
+                account={"id": 1, "account_uid": "uid-a"})
+        get.assert_not_called()
+        self.assertIn("Invalid status value", msg)
+        self.assertNotIn("Re-authorise", msg)
+
+    def test_a_failing_probe_leaves_the_original_message_intact(self):
+        with patch("app.sync.requests.get", side_effect=requests.ConnectionError("boom")), \
+             patch("app.sync._make_headers", return_value={}), \
+             patch("app.sync._bank_has_newer_session", return_value=False):
+            msg = _fetch_failure_message(
+                "Openbank (NL) → Openbank",
+                _http_error(400, body=self.OPENBANK_TRANSACTIONS),
+                account={"id": 1, "account_uid": "uid-a"})
+        self.assertIn("ASPSP_ERROR", msg)
+        self.assertIn("will not clear it", msg)
+
+    def test_probe_stays_quiet_when_details_answers_normally(self):
+        ok = MagicMock()
+        ok.ok = True
+        with patch("app.sync.requests.get", return_value=ok), \
+             patch("app.sync._make_headers", return_value={}):
+            self.assertEqual(_eb_probe_detail_snippet("uid-a"), "")
+
+    def test_enable_bankings_own_session_complaint_is_not_treated_as_the_banks(self):
+        # "Session status is not authorized" is Enable Banking talking about
+        # its own session, and stays a bank-side fault report.
+        with patch("app.sync.requests.get") as get, \
+             patch("app.sync._make_headers", return_value={}):
+            msg = _fetch_failure_message(
+                "ING (NL) → ING Prive",
+                _http_error(422, body={"message": "Session status is not authorized"}))
+        get.assert_not_called()
+        self.assertIn("send your logs", msg)
+        self.assertNotIn("Re-authorise", msg)
+
+    def test_nested_detail_reader_handles_every_shape(self):
+        r = MagicMock()
+        r.json.return_value = {"detail": {"message": "  Unauthorized  "}}
+        self.assertEqual(_eb_nested_detail(r), "Unauthorized")
+        r.json.return_value = {"detail": "plain text"}
+        self.assertEqual(_eb_nested_detail(r), "plain text")
+        r.json.return_value = {"detail": None}
+        self.assertEqual(_eb_nested_detail(r), "")
+        r.json.return_value = {"detail": {"error_name": "HttpException"}}
+        self.assertEqual(_eb_nested_detail(r), "")
+        r.json.side_effect = ValueError()
+        self.assertEqual(_eb_nested_detail(r), "")
+        self.assertEqual(_eb_nested_detail(None), "")
 
 
 class FetchRetryTest(unittest.TestCase):

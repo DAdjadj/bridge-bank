@@ -107,6 +107,33 @@ def complete_auth(code: str, state: str) -> dict:
         "valid_until": valid_until,
     }
 
+def get_session(session_id: str) -> dict:
+    """Read an existing session, including the accounts it authorises.
+
+    Lets a stored account be re-bound to an authorisation that is already
+    valid. Banks that allow only one active consent revoke the previous one
+    whenever a second is created, so at those banks starting a fresh auth to
+    repair one account is what breaks the next one."""
+    r = requests.get(f"{EB_API}/sessions/{session_id}", headers=_make_headers(), timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    accounts = []
+    for acct in data.get("accounts") or []:
+        # Full account objects are what this endpoint returns; a bare uid is
+        # tolerated so a shape change cannot break the repair path outright.
+        if isinstance(acct, dict):
+            accounts.append(acct)
+        elif isinstance(acct, str):
+            accounts.append({"uid": acct})
+    logger.info("Session %s reports status=%s with %d account(s)",
+                session_id, data.get("status"), len(accounts))
+    return {
+        "session_id": data.get("session_id") or session_id,
+        "status": data.get("status") or "",
+        "accounts": accounts,
+        "valid_until": (data.get("access") or {}).get("valid_until") or "",
+    }
+
 def check_token_expiry():
     """Return the minimum days left across all bank accounts, or None if no accounts."""
     accounts = db.get_all_bank_accounts()

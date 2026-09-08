@@ -17,7 +17,7 @@
 {% if mapping_mode %}
 <div class="card">
   <div class="card-title">Reconnect your accounts</div>
-  <div class="card-sub">You have more than one account at this bank, and this authorisation covers all of them. Match each Bridge Bank account to the bank account it syncs, so they all reconnect together.</div>
+  <div class="card-sub">{% if rebinding %}This bank's accounts are split across more than one authorisation, so the older one has stopped working. Match each Bridge Bank account to the bank account it syncs and they all move onto the newest connection. No new bank login is needed.{% else %}You have more than one account at this bank, and this authorisation covers all of them. Match each Bridge Bank account to the bank account it syncs, so they all reconnect together.{% endif %}</div>
   <form method="POST">
     <input type="hidden" name="session_id" value="{{ picker_session_id }}">
     <input type="hidden" name="mapping_mode" value="1">
@@ -33,9 +33,45 @@
     </div>
     {% endfor %}
     <div style="font-size:11px; color:#4a5568; margin:0.5rem 0 1rem;">Each bank account can only be linked to one Bridge Bank account. Anything left unselected keeps its current connection and may stop syncing.</div>
-    <button class="btn btn-primary" type="submit">Reconnect accounts &rarr;</button>
+    <button class="btn btn-primary" type="submit">{% if rebinding %}Re-bind accounts{% else %}Reconnect accounts{% endif %} &rarr;</button>
   </form>
 </div>
+{% elif multi_mode %}
+<div class="card">
+  <div class="card-title">Choose your accounts</div>
+  <div class="card-sub">This one authorisation covers every account below. Select all of the ones you want to sync now: adding another later needs a new authorisation, and some banks revoke the previous one when that happens.</div>
+  <form method="POST">
+    <input type="hidden" name="session_id" value="{{ picker_session_id }}">
+    <input type="hidden" name="multi_mode" value="1">
+    {% for acct in accounts %}
+    <div style="padding:14px 16px; border:1px solid #253450; border-radius:8px; margin-bottom:0.5rem;">
+      <label style="display:flex; align-items:center; gap:12px; cursor:pointer;">
+        <input type="checkbox" name="account_uid" value="{{ acct._uid }}" {% if loop.first %}checked{% endif %} style="accent-color:#3b82f6; flex-shrink:0; width:18px; height:18px;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:14px; font-weight:600; color:#e8edf5;">{{ acct._label }}</div>
+          {% if acct.details %}<div style="font-size:12px; color:#94a3b8;">{{ acct.details }}</div>{% elif acct.owner_name %}<div style="font-size:12px; color:#94a3b8;">{{ acct.owner_name }}</div>{% endif %}
+          {% if acct.currency %}<div style="font-size:11px; color:#4a5568;">{{ acct.currency }}</div>{% endif %}
+        </div>
+      </label>
+      <input type="text" name="actual_{{ acct._uid }}" list="actual-accounts" autocomplete="off" placeholder="Actual Budget account name" value="{% if loop.first %}{{ default_actual }}{% endif %}" style="width:100%; font-size:13px; padding:8px 10px; margin-top:10px;">
+    </div>
+    {% endfor %}
+    <datalist id="actual-accounts"></datalist>
+    <div style="font-size:11px; color:#4a5568; margin:0.5rem 0 1rem;">Each account syncs into its own account in Actual Budget, and each one uses a bank slot from your licence.</div>
+    <button class="btn btn-primary" type="submit">Connect selected accounts &rarr;</button>
+  </form>
+</div>
+<script>
+fetch('/api/actual-accounts').then(function (r) { return r.json(); }).then(function (names) {
+  var dl = document.getElementById('actual-accounts');
+  if (!dl) return;
+  (names || []).forEach(function (n) {
+    var o = document.createElement('option');
+    o.value = n;
+    dl.appendChild(o);
+  });
+}).catch(function () {});
+</script>
 {% else %}
 <div class="card">
   <div class="card-title">Choose an account</div>

@@ -320,12 +320,90 @@ def _eb_error_snippet(response):
         return ""
     return ": " + ": ".join(parts)[:160]
 
-def _fetch_failure_message(bank_label, exc):
+# Enable Banking wraps a consent the bank has revoked as a plain ASPSP_ERROR,
+# so the bank's own wording is the only thing separating it from a genuine
+# bank-side fault. Kept deliberately narrow: "Session status is not authorized"
+# is Enable Banking talking about its own session, a different failure.
+AUTH_FAILURE_MARKERS = ("unauthorized", "authentication failure")
+
+def _eb_nested_detail(response):
+    """The bank's own message from an Enable Banking error body, if it sent one."""
+    if response is None:
+        return ""
+    try:
+        data = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    detail = data.get("detail")
+    if isinstance(detail, dict):
+        nested = detail.get("message")
+        return nested.strip() if isinstance(nested, str) and nested.strip() else ""
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    return ""
+
+def _eb_probe_detail_snippet(account_uid):
+    """Ask /details for the reason /transactions would not give.
+
+    Openbank NL answers a revoked consent with detail:null on the transactions
+    endpoint but names the fault ("Unauthorized, authentication failure") on
+    the account details endpoint, so without this probe the one field that
+    identifies the failure never reaches the user. Runs on the error path
+    only, and stays silent when the probe itself fails."""
+    if not account_uid:
+        return ""
+    try:
+        r = requests.get(f"{EB_API}/accounts/{account_uid}/details",
+                         headers=_make_headers(), timeout=15)
+        if r.ok:
+            return ""
+        nested = _eb_nested_detail(r)
+        return (": " + nested[:160]) if nested else ""
+    except Exception as e:
+        log.debug("Detail probe for %s failed: %s", account_uid, e)
+        return ""
+
+def _looks_like_auth_failure(text):
+    low = (text or "").lower()
+    return any(marker in low for marker in AUTH_FAILURE_MARKERS)
+
+def _bank_has_newer_session(account):
+    """True when another account at this bank holds a later authorisation.
+
+    A bank that allows only one active consent revokes the previous one when a
+    second is created, leaving the older row bound to a session the bank no
+    longer honours. Enable Banking still reports both sessions AUTHORIZED, so
+    this local comparison is the only signal that the row can be repaired by
+    re-binding instead of by a fresh SCA."""
+    if not account:
+        return False
+    try:
+        rows = db.get_all_bank_accounts()
+    except Exception:
+        return False
+    mine = (account.get("session_expiry") or "", account.get("id") or 0)
+    for row in rows:
+        if row.get("id") == account.get("id") or row.get("sync_mode") == "balance":
+            continue
+        if row.get("bank_name") != account.get("bank_name"):
+            continue
+        if row.get("bank_country") != account.get("bank_country"):
+            continue
+        sid = row.get("session_id") or ""
+        if not sid or sid == (account.get("session_id") or ""):
+            continue
+        if (row.get("session_expiry") or "", row.get("id") or 0) > mine:
+            return True
+    return False
+
+def _fetch_failure_message(bank_label, exc, account=None):
     """User-facing sync-log message for a failed Enable Banking fetch.
 
-    Only 401/403 actually mean the session needs re-authorising; sending
-    users to re-auth for rate limits or bank-side errors wastes their SCA
-    and hides the real problem."""
+    Only 401/403, and a bank that names an authentication failure, mean the
+    connection needs attention; sending users to re-auth for rate limits or
+    bank-side errors wastes their SCA and hides the real problem."""
     response = getattr(exc, "response", None)
     status = response.status_code if response is not None else 0
     if status == 429:
@@ -334,10 +412,24 @@ def _fetch_failure_message(bank_label, exc):
         return f"{bank_label}: Your bank session has expired. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."
     if isinstance(exc, requests.HTTPError):
         detail = _eb_error_snippet(response)
+        if not _eb_nested_detail(response):
+            detail += _eb_probe_detail_snippet((account or {}).get("account_uid"))
+        if _looks_like_auth_failure(detail):
+            # The bank is refusing this account's authorisation, which a fresh
+            # one does clear. Re-binding clears it without spending an SCA.
+            if _bank_has_newer_session(account):
+                return (f"{bank_label}: Your bank rejected this account's authorisation (error {status}{detail}). "
+                        "Another account at this bank is on a newer authorisation and this one was left "
+                        "behind, which is what happens at banks that allow only one active consent. Open "
+                        "the Bank page and use 'Re-bind to the newest connection' to repair it without a "
+                        "new login.")
+            return (f"{bank_label}: Your bank rejected this account's authorisation (error {status}{detail}). "
+                    "Open Bridge Bank and click 'Re-authorise bank' on the Bank page to reconnect it.")
         # Deliberately does not offer re-authorisation. A refusal that is not
-        # 401/403 is the bank rejecting the request itself, so a fresh SCA
-        # cannot clear it, and sending users to re-authorise burns their SCA
-        # and makes them think they broke something.
+        # 401/403 and does not name an authentication failure is the bank
+        # rejecting the request itself, so a fresh SCA cannot clear it, and
+        # sending users to re-authorise burns their SCA and makes them think
+        # they broke something.
         return (f"{bank_label}: Your bank refused the request (error {status}{detail}). "
                 "This is a fault at the bank rather than an expired login, so reconnecting "
                 "will not clear it. Bridge Bank will retry on the next scheduled sync. If it "
@@ -1078,7 +1170,7 @@ def _sync_account(account, state):
     try:
         raw = _fetch_transactions(account_uid, date_from)
     except requests.RequestException as e:
-        msg = _fetch_failure_message(bank_label, e)
+        msg = _fetch_failure_message(bank_label, e, account)
         log.error(msg)
         return False, 0, msg
 

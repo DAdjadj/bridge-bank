@@ -107,6 +107,8 @@ The browser-based wizard walks you through five steps:
 
 You can connect up to 2 bank accounts by default. Each bank syncs to a different Actual Budget account (e.g. Revolut → "Revolut", N26 → "N26"). To add a second bank, go to the **Bank** tab and search for another bank.
 
+If your bank returns several accounts in one authorisation, select all the ones you want on the account screen and name an Actual Budget account for each. Connecting them one at a time costs one authorisation each, and some banks (Openbank NL among them) allow only one active connection, so authorising a second time silently revokes the first.
+
 Once complete, Bridge Bank runs silently in the background and syncs your transactions every day at the time you chose.
 
 ---
@@ -147,6 +149,8 @@ On each sync run, Bridge Bank:
 Enable Banking requires you to re-authorise access roughly every 6 months. If you configured email notifications, you will receive a warning before expiry.
 
 To re-authorise, go to the **Bank** tab in the Bridge Bank web UI and click **Re-authorise bank**.
+
+If the accounts at one bank end up on different connections, the **Bank** tab flags it and offers **Re-bind to the newest connection**, which moves them all onto the connection that still works, with no new bank login.
 
 ---
 
