@@ -142,6 +142,13 @@ On each sync run, Bridge Bank:
 6. Links matching internal transfers between connected Actual accounts
 7. Logs the result and sends an alert email if something went wrong
 
+### Per-bank options
+
+Each connected bank has two toggles on its card on the Banks page:
+
+- **Only sync booked transactions (skip pending)** — leaves pending transactions alone and imports each one when the bank books it.
+- **Use the transaction date instead of the booking date** — for banks that book a payment a day or more after it happens. KBC (BE) books a Friday evening payment on the Monday, so without this its transactions arrive in Actual dated later than the banking app shows. Transactions already imported keep the date they were imported with.
+
 ---
 
 ## Session renewal (every ~180 days)

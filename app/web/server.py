@@ -1803,6 +1803,15 @@ def toggle_skip_pending():
         logger.info("Set skip_pending=%s for account %s", skip, account_id)
     return redirect(url_for("bank"))
 
+@app.route("/toggle-transaction-date", methods=["POST"])
+def toggle_transaction_date():
+    account_id = request.form.get("account_id")
+    if account_id:
+        prefer = "1" if request.form.get("prefer_transaction_date") == "1" else "0"
+        db.update_bank_account_field(int(account_id), "prefer_transaction_date", prefer)
+        logger.info("Set prefer_transaction_date=%s for account %s", prefer, account_id)
+    return redirect(url_for("bank"))
+
 @app.route("/reset-sync", methods=["POST"])
 def reset_sync():
     account_id = request.form.get("account_id")

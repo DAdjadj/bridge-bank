@@ -147,6 +147,19 @@
           </span>
         </form>
       </div>
+      <div style="margin-top:6px;">
+        <form method="POST" action="/toggle-transaction-date" style="display:inline;" id="transaction-date-form-{{ a.id }}">
+          <input type="hidden" name="account_id" value="{{ a.id }}">
+          <input type="hidden" name="prefer_transaction_date" value="{{ '0' if a.prefer_transaction_date else '1' }}">
+          <span style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:#94a3b8;" onclick="this.querySelector('input[type=checkbox]').click();">
+            <input type="checkbox" {% if a.prefer_transaction_date %}checked{% endif %} onchange="document.getElementById('transaction-date-form-{{ a.id }}').submit();" onclick="event.stopPropagation();" style="width:14px;height:14px;margin:0;padding:0;appearance:auto;-webkit-appearance:auto;background:transparent;border:none;cursor:pointer;flex-shrink:0;">
+            <span>Use the transaction date instead of the booking date</span>
+          </span>
+        </form>
+        <div style="margin-top:3px;margin-left:20px;font-size:10px;color:#4a5568;line-height:1.4;">
+          For banks that book a payment a day or more after it happens, so Actual shows the date your banking app shows. Transactions already imported keep the date they were imported with.
+        </div>
+      </div>
       {% endif %}
     </div>
     {% endfor %}
