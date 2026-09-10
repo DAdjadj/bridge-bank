@@ -437,8 +437,27 @@ def _fetch_failure_message(bank_label, exc, account=None):
     return (f"{bank_label}: Could not reach your bank's API ({type(exc).__name__}). "
             "Bridge Bank will retry on the next scheduled sync.")
 
-def _parse_date(t):
-    raw = t.get("booking_date") or t.get("value_date") or t.get("transaction_date")
+def _parse_date(t, prefer_transaction_date=False):
+    """Pick the date a transaction gets in Actual.
+
+    The booking date is the default because it is the one date a booked
+    transaction never changes, and both the pending_map keys and the
+    reference-less duplicate match are built out of it.
+
+    Banks that book late show the account holder a different date than the one
+    that reaches Actual: at KBC (BE) a Friday evening payment carries a
+    transaction and value date of Friday and books on the Monday, so every
+    weekend and late-evening payment lands one to three days forward. Turning
+    the preference on for such a bank swaps the order so Actual matches what
+    the banking app shows. It also keeps a pending transaction on the date it
+    was imported with once it books: a pending transaction has no booking date
+    at all, so with the default order its date jumps forward the moment the
+    booking arrives.
+    """
+    if prefer_transaction_date:
+        raw = t.get("transaction_date") or t.get("value_date") or t.get("booking_date")
+    else:
+        raw = t.get("booking_date") or t.get("value_date") or t.get("transaction_date")
     if not raw: raise ValueError("No date")
     return datetime.date.fromisoformat(raw[:10])
 
@@ -1199,6 +1218,7 @@ def _sync_account(account, state):
                 new_txn        = []
 
             skip_pending = bool(account.get("skip_pending"))
+            prefer_transaction_date = bool(account.get("prefer_transaction_date"))
 
             with _actual_phase(bank_label, "reconcile fetched transactions"):
                 for txn in raw:
@@ -1207,7 +1227,7 @@ def _sync_account(account, state):
                         if status == "PDNG" and skip_pending:
                             skipped += 1
                             continue
-                        date   = _parse_date(txn)
+                        date   = _parse_date(txn, prefer_transaction_date)
                         amount = _parse_amount(txn)
                         payee  = _parse_payee(txn)
                         notes  = _parse_notes(txn)
