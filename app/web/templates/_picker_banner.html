@@ -1,0 +1,16 @@
+{#- Shown while the account picker waits on a flow left part-way. Cancel clears
+    that state; after a fresh authorisation it also gives up the bank login
+    already done, hence the confirmation. -#}
+{% if picker_kind %}
+  <div class="alert alert-warn">
+    <strong>Almost done:</strong>
+    {% if picker_kind == 'rebind' %}finish re-binding your {{ pending_bank_name }} accounts.
+    {% elif picker_kind == 'add' %}choose what to add from your {{ pending_bank_name }} connection.
+    {% else %}your bank returned several accounts.{% endif %}
+    <a href="/pick-account" style="color:inherit;font-weight:600;">{% if picker_kind == 'auth' %}Choose which one to connect{% else %}Continue{% endif %} &rarr;</a>
+    <form method="POST" action="/bank" style="display:inline;margin-left:10px;"{% if picker_kind == 'auth' %} onsubmit="return confirm('Cancel without connecting? Connecting these accounts later needs a new bank login.');"{% endif %}>
+      <input type="hidden" name="action" value="cancel">
+      <button type="submit" style="background:none;border:none;padding:0;cursor:pointer;font:inherit;color:inherit;text-decoration:underline;">Cancel</button>
+    </form>
+  </div>
+{% endif %}

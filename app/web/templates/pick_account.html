@@ -17,19 +17,22 @@
 {% if mapping_mode %}
 <div class="card">
   <div class="card-title">Reconnect your accounts</div>
-  <div class="card-sub">{% if rebinding %}This bank's accounts are split across more than one authorisation, so the older one has stopped working. Match each Bridge Bank account to the bank account it syncs and they all move onto the newest connection. No new bank login is needed.{% else %}You have more than one account at this bank, and this authorisation covers all of them. Match each Bridge Bank account to the bank account it syncs, so they all reconnect together.{% endif %}</div>
+  <div class="card-sub">{% if rebinding %}{% if mapping_rows | length == 1 %}This account is still on an older authorisation, and your newest {{ pending_bank_name }} connection can take it over. Choose the bank account it syncs and it moves onto the newest connection.{% else %}These accounts are still on an older authorisation, and your newest {{ pending_bank_name }} connection can take them over. Choose the bank account each one syncs and they move onto the newest connection.{% endif %} No new bank login is needed. Accounts already on the newest connection are not listed and keep syncing as they are.{% else %}You have more than one account at this bank, and this authorisation covers all of them. Match each Bridge Bank account to the bank account it syncs, so they all reconnect together.{% endif %}</div>
   <form method="POST">
     <input type="hidden" name="session_id" value="{{ picker_session_id }}">
     <input type="hidden" name="mapping_mode" value="1">
-    {% for s in siblings %}
+    {% for s, options, matched in mapping_rows %}
     <div style="padding:14px 16px; border:1px solid #253450; border-radius:8px; margin-bottom:0.5rem;">
       <div style="font-size:14px; font-weight:600; color:#e8edf5; margin-bottom:8px;">{{ s.actual_account }}</div>
       <select name="map_{{ s.id }}" style="width:100%; font-size:13px; padding:8px 10px;">
         <option value="">Do not reconnect this account</option>
-        {% for acct in accounts %}
-        <option value="{{ acct._uid }}">{{ acct._label }}{% if acct.currency %} ({{ acct.currency }}){% endif %}</option>
+        {% for acct in options %}
+        <option value="{{ acct._uid }}"{% if matched and options | length == 1 %} selected{% endif %}>{{ acct._label }}{% if acct.currency %} ({{ acct.currency }}){% endif %}{% if matched %}: the same bank account{% endif %}</option>
         {% endfor %}
       </select>
+      {% if rebinding and not matched %}
+      <div style="font-size:11px; color:#94a3b8; margin-top:6px;">Bridge Bank could not confirm which of these is the bank account {{ s.actual_account }} syncs, so choose carefully, or leave it as it is.</div>
+      {% endif %}
     </div>
     {% endfor %}
     <div style="font-size:11px; color:#4a5568; margin:0.5rem 0 1rem;">Each bank account can only be linked to one Bridge Bank account. Anything left unselected keeps its current connection and may stop syncing.</div>
@@ -94,4 +97,8 @@ fetch('/api/actual-accounts').then(function (r) { return r.json(); }).then(funct
   </form>
 </div>
 {% endif %}
+<form method="POST" action="/bank" style="margin-top:0.25rem;"{% if not rebinding and not adding_from_session %} onsubmit="return confirm('Cancel without connecting? Connecting these accounts later needs a new bank login.');"{% endif %}>
+  <input type="hidden" name="action" value="cancel">
+  <button type="submit" class="btn btn-ghost" style="width:100%;">Cancel</button>
+</form>
 {% endblock %}

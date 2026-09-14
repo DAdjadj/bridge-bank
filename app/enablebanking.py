@@ -119,12 +119,24 @@ def get_session(session_id: str) -> dict:
     data = r.json()
     accounts = []
     for acct in data.get("accounts") or []:
-        # Full account objects are what this endpoint returns; a bare uid is
-        # tolerated so a shape change cannot break the repair path outright.
+        # This endpoint lists bare uids; full account objects are tolerated so
+        # a shape change cannot break the repair path outright.
         if isinstance(acct, dict):
             accounts.append(acct)
         elif isinstance(acct, str):
             accounts.append({"uid": acct})
+    # The uids are new for every session, so accounts_data's identification_hash
+    # is the only thing here that says which bank account each one is.
+    known = {a.get("uid") for a in accounts}
+    for item in data.get("accounts_data") or []:
+        if not isinstance(item, dict) or not item.get("uid"):
+            continue
+        if item["uid"] not in known:
+            accounts.append({"uid": item["uid"]})
+            known.add(item["uid"])
+        for acct in accounts:
+            if acct.get("uid") == item["uid"] and not acct.get("identification_hash"):
+                acct["identification_hash"] = item.get("identification_hash") or ""
     logger.info("Session %s reports status=%s with %d account(s)",
                 session_id, data.get("status"), len(accounts))
     return {

@@ -157,7 +157,7 @@ Enable Banking requires you to re-authorise access roughly every 6 months. If yo
 
 To re-authorise, go to the **Bank** tab in the Bridge Bank web UI and click **Re-authorise bank**.
 
-If the accounts at one bank end up on different connections, the **Bank** tab flags it and offers **Re-bind to the newest connection**, which moves them all onto the connection that still works, with no new bank login.
+If an account is left on an older connection that your newest connection to the same bank also covers, or the bank starts refusing that older connection, the **Bank** tab flags it and offers **Re-bind to the newest connection**, which moves it onto the connection that still works, with no new bank login. Accounts a bank keeps on separate connections by design, such as a Revolut personal and business profile, are left as they are.
 
 ---
 
