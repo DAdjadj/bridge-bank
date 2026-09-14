@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import os
 import uuid
@@ -25,6 +26,16 @@ def _ensure_tables(conn):
             status TEXT,
             tx_count INTEGER DEFAULT 0,
             message TEXT
+        )
+    """)
+    # Which bank accounts each Enable Banking session covers. Only the
+    # session-scoped uid and Enable Banking's identification_hash are kept: no
+    # IBANs or names.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS session_accounts (
+            session_id TEXT PRIMARY KEY,
+            accounts TEXT NOT NULL,
+            recorded_at TEXT DEFAULT (datetime('now'))
         )
     """)
     conn.execute("""
@@ -225,6 +236,39 @@ def update_bank_account_field(account_id: int, field: str, value: str):
         _ensure_tables(conn)
         conn.execute(f"UPDATE bank_accounts SET {field} = ? WHERE id = ?", (value, account_id))
         conn.commit()
+
+def record_session_accounts(session_id: str, accounts: list):
+    """Remember the accounts one session covers, as {"uid", "identification_hash"} dicts.
+
+    Enable Banking hands out fresh account uids with every authorisation, so a
+    uid alone cannot say whether two sessions cover the same bank account. The
+    identification_hash can: it stays the same for one account in every session.
+    """
+    entries = [{"uid": a["uid"], "identification_hash": a.get("identification_hash") or ""}
+               for a in accounts or [] if a.get("uid")]
+    if not session_id or not entries:
+        return
+    with _conn() as conn:
+        _ensure_tables(conn)
+        conn.execute(
+            "INSERT INTO session_accounts (session_id, accounts) VALUES (?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET accounts = excluded.accounts, recorded_at = datetime('now')",
+            (session_id, json.dumps(entries))
+        )
+        conn.commit()
+
+def get_session_accounts() -> dict:
+    """Recorded accounts per session id; sessions never recorded are absent."""
+    with _conn() as conn:
+        _ensure_tables(conn)
+        rows = conn.execute("SELECT session_id, accounts FROM session_accounts").fetchall()
+    recorded = {}
+    for row in rows:
+        try:
+            recorded[row["session_id"]] = json.loads(row["accounts"])
+        except ValueError:
+            continue
+    return recorded
 
 def get_first_sync_date() -> str:
     with _conn() as conn:

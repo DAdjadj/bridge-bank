@@ -369,34 +369,89 @@ def _looks_like_auth_failure(text):
     low = (text or "").lower()
     return any(marker in low for marker in AUTH_FAILURE_MARKERS)
 
+# Every sync-log message for an authorisation the bank refused carries one of
+# these. That refusal is what shows an account left on an older session has
+# actually stopped working, rather than just being older.
+AUTH_REFUSAL_PHRASES = ("rejected this account's authorisation", "bank session has expired")
+
+def is_auth_refusal(message):
+    low = (message or "").lower()
+    return any(phrase in low for phrase in AUTH_REFUSAL_PHRASES)
+
+def session_rank(account):
+    """Order the sessions at one bank from oldest to newest.
+
+    valid_until is stamped when an authorisation starts, so two of them minutes
+    apart differ there; the row id breaks the tie if a bank pins both to the
+    same timestamp.
+    """
+    return (account.get("session_expiry") or "", account.get("id") or 0)
+
+def _session_account_uid(acct):
+    return acct.get("uid") or acct.get("account_uid") or acct.get("resource_id")
+
+def rebind_targets(row, newest_accounts, session_accounts, held_uids):
+    """Accounts on its bank's newest session that `row` could be re-bound onto.
+
+    Several sessions at one bank are not a fault in themselves: Revolut
+    authorises a personal and a business profile separately, each session
+    listing only its own account, and both keep working. Account uids are new
+    in every session, so they cannot say whether the newest session covers the
+    account this row syncs, but Enable Banking's identification_hash is the
+    same for one bank account in every session and can.
+
+    Returns (targets, matched). matched means the targets carry this row's own
+    identification_hash. Otherwise they are the accounts it cannot be told
+    apart from, and empty when the newest session covers nothing it could be.
+    targets is None when the newest session's accounts were never recorded.
+    Accounts some stored row already uses are never targets.
+    """
+    if newest_accounts is None:
+        return None, False
+    free = [a for a in newest_accounts
+            if _session_account_uid(a) and _session_account_uid(a) not in held_uids]
+    own_hash = ""
+    for acct in session_accounts.get(row.get("session_id")) or []:
+        if _session_account_uid(acct) == row.get("account_uid"):
+            own_hash = acct.get("identification_hash") or ""
+            break
+    if not own_hash:
+        return free, False
+    same = [a for a in free if a.get("identification_hash") == own_hash]
+    if same:
+        return same, True
+    return [a for a in free if not a.get("identification_hash")], False
+
 def _bank_has_newer_session(account):
-    """True when another account at this bank holds a later authorisation.
+    """True when a later authorisation at this bank could take this account over.
 
     A bank that allows only one active consent revokes the previous one when a
     second is created, leaving the older row bound to a session the bank no
     longer honours. Enable Banking still reports both sessions AUTHORIZED, so
-    this local comparison is the only signal that the row can be repaired by
-    re-binding instead of by a fresh SCA."""
+    comparing the stored rows is the only signal that the row can be repaired
+    by re-binding instead of by a fresh SCA. A newer session that covers none
+    of the accounts this row could be is a separate connection, which only a
+    re-authorisation repairs."""
     if not account:
         return False
     try:
         rows = db.get_all_bank_accounts()
+        session_accounts = db.get_session_accounts()
     except Exception:
         return False
-    mine = (account.get("session_expiry") or "", account.get("id") or 0)
-    for row in rows:
-        if row.get("id") == account.get("id") or row.get("sync_mode") == "balance":
-            continue
-        if row.get("bank_name") != account.get("bank_name"):
-            continue
-        if row.get("bank_country") != account.get("bank_country"):
-            continue
-        sid = row.get("session_id") or ""
-        if not sid or sid == (account.get("session_id") or ""):
-            continue
-        if (row.get("session_expiry") or "", row.get("id") or 0) > mine:
-            return True
-    return False
+    at_bank = [r for r in rows
+               if r.get("sync_mode") != "balance" and r.get("session_id")
+               and r.get("bank_name") == account.get("bank_name")
+               and r.get("bank_country") == account.get("bank_country")]
+    if not at_bank or not account.get("session_id"):
+        return False
+    newest = max(at_bank, key=session_rank)
+    if newest.get("session_id") == account.get("session_id") or session_rank(newest) < session_rank(account):
+        return False
+    held = {r.get("account_uid") for r in rows if r.get("account_uid")}
+    targets, _ = rebind_targets(account, session_accounts.get(newest.get("session_id")),
+                                session_accounts, held)
+    return targets is None or bool(targets)
 
 def _fetch_failure_message(bank_label, exc, account=None):
     """User-facing sync-log message for a failed Enable Banking fetch.

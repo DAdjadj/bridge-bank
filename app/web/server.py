@@ -189,24 +189,25 @@ def _claim_bank_seat(account):
         return "Could not confirm your global bank slot availability right now. Please try again in a moment."
     return result.get("error") or "Bank account limit reached for this licence."
 
-def _session_rank(account):
-    """Order the sessions at one bank from oldest to newest.
-
-    valid_until is stamped when an authorisation starts, so two of them minutes
-    apart differ there; the row id breaks the tie if a bank pins both to the
-    same timestamp.
-    """
-    return (account.get("session_expiry") or "", account.get("id") or 0)
-
 def _split_session_banks(accounts):
-    """Banks whose stored accounts are spread across more than one session.
+    """Banks where an account on an older session could move onto the newest one.
 
     At a bank that allows only one active consent this is a broken state
     rather than a choice: creating the second authorisation revoked the first,
     so every row on an older session now fails while the newest one keeps
     working. Enable Banking reports all of those sessions as AUTHORIZED, so
     comparing the stored rows is the only way to see it.
+
+    A second session alone does not prove that, though. Revolut keeps a
+    personal and a business profile on separate authorisations that both keep
+    working, and flagging those never clears: renewing either one only flips
+    which of them looks older. So a row is named only when the newest session
+    provably covers its account, or, for sessions recorded before Bridge Bank
+    kept track of their accounts, when the bank is already refusing the row's
+    own authorisation (the auth_refused flag from _mark_sync_failures).
     """
+    session_accounts = db.get_session_accounts()
+    held = {a.get("account_uid") for a in accounts if a.get("account_uid")}
     groups = {}
     for a in accounts:
         if a.get("sync_mode") == "balance" or not a.get("session_id"):
@@ -217,15 +218,96 @@ def _split_session_banks(accounts):
     for (bank_name, bank_country), rows in sorted(groups.items()):
         if len({r.get("session_id") for r in rows}) < 2:
             continue
-        newest = max(rows, key=_session_rank)
-        stale = [r for r in rows if r.get("session_id") != newest.get("session_id")]
+        newest = max(rows, key=sync.session_rank)
+        newest_accounts = session_accounts.get(newest.get("session_id"))
+        named = []
+        for r in rows:
+            if r.get("session_id") == newest.get("session_id"):
+                continue
+            targets, matched = sync.rebind_targets(r, newest_accounts, session_accounts, held)
+            if matched or (r.get("auth_refused") and (targets is None or targets)):
+                named.append((r, matched))
+        if not named:
+            continue
         split.append({
             "bank_name": bank_name,
             "bank_country": bank_country,
             "newest_account": newest.get("actual_account"),
-            "stale_names": [r.get("actual_account") for r in stale],
+            "stale_names": [r.get("actual_account") for r, _matched in named],
+            # The page only says the older connection stopped working, or that
+            # the newest one covers these accounts, when that is known.
+            "stopped": any(r.get("auth_refused") for r, _matched in named),
+            "covered": all(matched for _r, matched in named),
         })
     return split
+
+def _mark_sync_failures(accounts):
+    """Flag each account with how it fared on the last sync cycle.
+
+    Cards show "Needs re-authorisation" instead of a blanket "Connected", and
+    an authorisation the bank refused is the evidence that an account left on
+    an older session has actually stopped working.
+    """
+    failure_messages = _last_run_failure_messages()
+    for a in accounts:
+        label = sync.bank_label(a)
+        matched = next((m for m in failure_messages if m.startswith(label + ":") or m == label), None)
+        a["sync_failed"] = bool(matched)
+        a["needs_reauth"] = bool(matched) and "re-authorise" in matched.lower()
+        a["auth_refused"] = bool(matched) and sync.is_auth_refusal(matched)
+    return accounts
+
+def _remember_session_accounts(session_id, accounts):
+    """Record which accounts a session covers, so the Bank page can tell a
+    split connection from separate ones without asking Enable Banking on every
+    render. Bookkeeping only: a failure here must never fail the flow."""
+    try:
+        db.record_session_accounts(session_id, [
+            {"uid": _account_uid_of(a), "identification_hash": a.get("identification_hash") or ""}
+            for a in accounts if isinstance(a, dict) and _account_uid_of(a)])
+    except Exception as e:
+        logger.warning("Could not record the accounts of session %s: %s", session_id, e)
+
+def _rebind_candidates(bank_name, bank_country, newest_session_id, newest_accounts, look_up_older=False):
+    """Every account at one bank left on an older session, with what the newest could take.
+
+    Returns (row, targets, matched) triples, as sync.rebind_targets describes
+    them. With look_up_older, older sessions whose accounts were never recorded
+    are read once so their identification_hash can be matched; only sessions
+    created before Bridge Bank recorded them need it.
+    """
+    all_accounts = _mark_sync_failures(db.get_all_bank_accounts())
+    held = {a.get("account_uid") for a in all_accounts if a.get("account_uid")}
+    stale = [a for a in all_accounts
+             if a.get("sync_mode") != "balance"
+             and a.get("bank_name") == bank_name
+             and a.get("bank_country") == bank_country
+             and a.get("session_id")
+             and a.get("session_id") != newest_session_id]
+    session_accounts = db.get_session_accounts()
+    free = [a for a in newest_accounts if _account_uid_of(a) and _account_uid_of(a) not in held]
+    unrecorded = sorted({r["session_id"] for r in stale} - set(session_accounts))
+    if look_up_older and free and unrecorded:
+        from .. import enablebanking
+        for sid in unrecorded:
+            try:
+                _remember_session_accounts(sid, enablebanking.get_session(sid).get("accounts") or [])
+            except Exception as e:
+                logger.warning("Could not read older session %s to match its accounts: %s", sid, e)
+        session_accounts = db.get_session_accounts()
+    return [(row,) + sync.rebind_targets(row, newest_accounts, session_accounts, held)
+            for row in stale]
+
+def _rebind_offered(row, targets, matched):
+    """Whether the re-bind offers this row a move at all.
+
+    Only when the newest session provably covers its account, or when that
+    cannot be told but the bank is already refusing the row's own
+    authorisation. Anything else stays where it is: banks also keep accounts
+    on separate connections by design, and moving one of those onto another
+    account would import that account's transactions into it.
+    """
+    return matched or (row.get("auth_refused") and bool(targets))
 
 def _connected_banks(accounts):
     """Banks that already hold an authorisation, newest-first per bank.
@@ -689,6 +771,7 @@ def actual_accounts_api():
 def bank():
     # /callback and other flows redirect here with ?error=<message>
     error    = request.args.get("error")
+    notice   = request.args.get("notice")
     auth_url = None
 
     if request.method == "POST":
@@ -750,8 +833,9 @@ def bank():
                     db.set_setting("pending_bank_country", bank_country)
                     db.set_setting("pending_start_sync_date", start_sync_date)
                     # A fresh attempt invalidates any leftover picker state from
-                    # an earlier, abandoned auth.
-                    for key in ["pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until"]:
+                    # an earlier, abandoned auth, re-bind or add.
+                    for key in ["pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until",
+                                "pending_rebind", "pending_add_from_session"]:
                         db.set_setting(key, "")
                     try:
                         # Update BRIDGE_BANK_URL from current request so the OAuth
@@ -867,23 +951,18 @@ def bank():
     from ..providers import get_all_providers
     balance_providers = get_all_providers()
 
-    # Flag accounts that failed on the last sync cycle so each card can show a
-    # "Needs re-authorisation" state instead of a blanket "Connected".
-    failure_messages = _last_run_failure_messages()
-    for a in all_accounts:
-        label = sync.bank_label(a)
-        matched = next((m for m in failure_messages if m.startswith(label + ":") or m == label), None)
-        a["sync_failed"] = bool(matched)
-        a["needs_reauth"] = bool(matched) and "re-authorise" in matched.lower()
+    _mark_sync_failures(all_accounts)
 
     return render_template("bank.html",
         error=error,
+        notice=notice,
         success=success,
         released=released,
         bank_seat_error=bank_seat_error,
         split_banks=_split_session_banks(all_accounts),
         connected_banks=_connected_banks(all_accounts),
-        picker_pending=bool(db.get_setting("pending_auth_accounts")),
+        picker_kind=_pending_picker_kind(),
+        pending_bank_name=db.get_setting("pending_bank_name"),
         auth_url=auth_url,
         all_accounts=all_accounts,
         days_left=days_left,
@@ -933,7 +1012,9 @@ def reauthorise():
         db.set_setting("pending_reauth_account_id", account_id)
         db.set_setting("pending_bank_name", bank_name)
         db.set_setting("pending_bank_country", bank_country)
-        for key in ["pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until"]:
+        # A re-bind or add abandoned earlier must not steer this auth's picker.
+        for key in ["pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until",
+                    "pending_rebind", "pending_add_from_session"]:
             db.set_setting(key, "")
         scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
         host   = request.headers.get("X-Forwarded-Host", request.host)
@@ -978,15 +1059,43 @@ def reauthorise():
 # Re-bind a bank whose accounts drifted onto different sessions
 # ---------------------------------------------------------------------------
 
+def _nothing_to_rebind_message(bank_name, candidates):
+    """Why a re-bind found nothing to move, without claiming more than is known.
+
+    `candidates` are the _rebind_candidates triples, none of them offered.
+    """
+    if not candidates:
+        return "Nothing is left to re-bind at %s: its accounts are all on the newest connection." % bank_name
+    stale_names = [row.get("actual_account") or "" for row, _targets, _matched in candidates]
+    refused = any(row.get("auth_refused") for row, _targets, _matched in candidates)
+    # Empty targets everywhere means the newest session holds nothing these
+    # accounts could be; anything else is only what Bridge Bank can tell.
+    certain = not any(targets for _row, targets, _matched in candidates)
+    names = ", ".join(stale_names[:-1]) + " and " + stale_names[-1] if len(stale_names) > 1 else stale_names[0]
+    one = len(stale_names) == 1
+    it = "it" if one else "them"
+    cover = "does not cover" if certain else "does not seem to cover"
+    if refused:
+        return ("Nothing to re-bind at %s: your newest connection there %s %s, so re-binding cannot "
+                "repair %s. Re-authorise %s instead, and if the bank asks which accounts to share, "
+                "include every account you sync from it." % (bank_name, cover, names, it, it))
+    return ("Nothing to re-bind at %s: %s %s on %s that your newest one %s, so there is nothing to "
+            "move. That is normal at banks that authorise each account or profile on its own, such "
+            "as a personal and a business profile."
+            % (bank_name, names, "is" if one else "are",
+               "a separate connection" if one else "separate connections", cover))
+
 @app.route("/bank/rebind", methods=["POST"])
 def rebind():
-    """Point every account at one bank back at its newest live session.
+    """Point the accounts left on an older session at one bank back at its newest one.
 
-    The surviving authorisation already covers all of those accounts, so
-    nothing has to be authorised again and no SCA is spent. That matters at a
-    bank allowing only one active consent, where starting a fresh auth to
-    repair one account is exactly what breaks the next one. From here the
-    ordinary re-auth mapping screen does the rest.
+    The surviving authorisation already covers those accounts, so nothing has
+    to be authorised again and no SCA is spent. That matters at a bank
+    allowing only one active consent, where starting a fresh auth to repair
+    one account is exactly what breaks the next one. From here the ordinary
+    re-auth mapping screen does the rest, offering only what _rebind_offered
+    allows, and a bank whose sessions are separate connections by design is
+    told so instead of being offered a move that would mix two accounts.
     """
     bank_name    = request.form.get("bank_name", "").strip()
     bank_country = request.form.get("bank_country", "").strip()
@@ -995,10 +1104,10 @@ def rebind():
             and a.get("bank_name") == bank_name
             and a.get("bank_country") == bank_country
             and a.get("session_id")]
-    if len(rows) < 2:
+    if len({r["session_id"] for r in rows}) < 2:
         return redirect(url_for("bank") + "?error=" + quote(
             "There is nothing to re-bind at this bank."))
-    newest = max(rows, key=_session_rank)
+    newest = max(rows, key=sync.session_rank)
     try:
         from .. import enablebanking
         session = enablebanking.get_session(newest["session_id"])
@@ -1012,6 +1121,12 @@ def rebind():
         return redirect(url_for("bank") + "?error=" + quote(
             "The newest connection for this bank does not list any accounts, so there is "
             "nothing to re-bind to. Re-authorise instead."))
+    _remember_session_accounts(newest["session_id"], accounts)
+    candidates = _rebind_candidates(bank_name, bank_country, newest["session_id"], accounts,
+                                    look_up_older=True)
+    if not any(_rebind_offered(*c) for c in candidates):
+        return redirect(url_for("bank") + "?notice=" + quote(
+            _nothing_to_rebind_message(bank_name, candidates)))
     import json
     db.set_setting("pending_auth_session_id", newest["session_id"])
     db.set_setting("pending_auth_accounts", json.dumps(accounts))
@@ -1021,6 +1136,7 @@ def rebind():
     db.set_setting("pending_bank_name", bank_name)
     db.set_setting("pending_bank_country", bank_country)
     db.set_setting("pending_rebind", "1")
+    db.set_setting("pending_add_from_session", "")
     return redirect(url_for("pick_account"))
 
 @app.route("/bank/add-from-connection", methods=["POST"])
@@ -1042,7 +1158,7 @@ def add_from_connection():
     if not rows:
         return redirect(url_for("bank") + "?error=" + quote(
             "There is no existing connection at this bank to add an account from."))
-    newest = max(rows, key=_session_rank)
+    newest = max(rows, key=sync.session_rank)
     try:
         from .. import enablebanking
         session = enablebanking.get_session(newest["session_id"])
@@ -1051,6 +1167,7 @@ def add_from_connection():
         return redirect(url_for("bank") + "?error=" + quote(
             "Could not read your existing connection at this bank (%s). Connect the bank "
             "again to authorise a new one." % e))
+    _remember_session_accounts(newest["session_id"], session.get("accounts") or [])
     taken = {r.get("account_uid") for r in rows}
     unused = [a for a in (session.get("accounts") or [])
               if _account_uid_of(a) and _account_uid_of(a) not in taken]
@@ -1075,6 +1192,7 @@ def add_from_connection():
     db.set_setting("pending_auth_valid_until",
                    session.get("valid_until") or newest.get("session_expiry") or "")
     db.set_setting("pending_add_from_session", "1")
+    db.set_setting("pending_rebind", "")
     return redirect(url_for("pick_account"))
 
 # ---------------------------------------------------------------------------
@@ -1271,6 +1389,7 @@ def _complete_auth_from_code(code, state, source="web"):
             return _finish("error", NO_ACCOUNTS_ERROR)
         accounts = result["accounts"]
         logger.info("Auth completed via %s: %d account(s), session=%s", source, len(accounts), result["session_id"])
+        _remember_session_accounts(result["session_id"], accounts)
         if len(accounts) == 1:
             account_uid = accounts[0].get("uid") or accounts[0].get("account_uid") or accounts[0].get("resource_id")
             logger.info("Auto-connecting single account uid=%s", account_uid)
@@ -1381,6 +1500,42 @@ def _reauth_sibling_accounts():
         and a.get("bank_country") == target.get("bank_country")
     ]
 
+def _mapping_rows(accounts):
+    """The stored accounts the mapping screen asks about, each with what it may take.
+
+    Returns (row, options, matched) triples. A re-authorisation remaps every
+    account at the bank onto its new session. A re-bind only moves the ones
+    _rebind_offered allows, and never onto an account a stored row already
+    uses: offering those is how two Bridge Bank accounts end up importing one
+    bank account.
+    """
+    if db.get_setting("pending_rebind") == "1":
+        candidates = _rebind_candidates(db.get_setting("pending_bank_name"),
+                                        db.get_setting("pending_bank_country"),
+                                        db.get_setting("pending_auth_session_id"), accounts)
+        return [c for c in candidates if _rebind_offered(*c)]
+    siblings = _reauth_sibling_accounts()
+    sibling_ids = {s["id"] for s in siblings}
+    elsewhere = {a.get("account_uid") for a in db.get_all_bank_accounts()
+                 if a["id"] not in sibling_ids and a.get("account_uid")}
+    options = [a for a in accounts if a.get("_uid") not in elsewhere]
+    return [(s, options, False) for s in siblings]
+
+def _pending_picker_kind():
+    """Which flow left the account picker waiting, for the "Almost done" banners."""
+    if not db.get_setting("pending_auth_accounts"):
+        return ""
+    if db.get_setting("pending_rebind") == "1":
+        return "rebind"
+    if db.get_setting("pending_add_from_session") == "1":
+        return "add"
+    return "auth"
+
+# What /bank/rebind leaves for the mapping screen.
+REBIND_PENDING_KEYS = ("pending_auth_session_id", "pending_auth_accounts", "pending_auth_valid_until",
+                       "pending_reauth_account_id", "pending_bank_name", "pending_bank_country",
+                       "pending_rebind")
+
 @app.route("/pick-account")
 def pick_account():
     import json
@@ -1392,10 +1547,24 @@ def pick_account():
     # When a re-auth covers several stored accounts at the same bank, map each
     # one instead of connecting a single account and orphaning the rest.
     siblings = _reauth_sibling_accounts()
-    # A re-bind reuses a session that is already live, so the mapping screen
-    # has to engage even when that session reports only one account back.
+    mapping_rows = _mapping_rows(accounts)
     rebinding = db.get_setting("pending_rebind") == "1"
-    mapping_mode = len(siblings) > 1 and (len(accounts) > 1 or rebinding)
+    if rebinding:
+        # A re-bind reuses a session that is already live, so the mapping
+        # screen has to engage even when that session reports only one account
+        # back. With nothing left to move (fixed or disconnected since), the
+        # pending re-bind is stale and would only keep the banner up.
+        if not mapping_rows:
+            bank_name = db.get_setting("pending_bank_name")
+            notice = _nothing_to_rebind_message(bank_name, _rebind_candidates(
+                bank_name, db.get_setting("pending_bank_country"),
+                db.get_setting("pending_auth_session_id"), accounts))
+            for key in REBIND_PENDING_KEYS:
+                db.set_setting(key, "")
+            return redirect(url_for("bank") + "?notice=" + quote(notice))
+        mapping_mode = True
+    else:
+        mapping_mode = len(siblings) > 1 and len(accounts) > 1
     # Nothing stored to re-authorise means this is a first connection, and
     # every account the bank returned can be taken from this one authorisation
     # instead of costing an authorisation each.
@@ -1406,7 +1575,7 @@ def pick_account():
     multi_mode = not siblings and (len(accounts) > 1 or adding_from_session)
     return render_template("pick_account.html", accounts=accounts, active="bank",
                            picker_session_id=db.get_setting("pending_auth_session_id"),
-                           mapping_mode=mapping_mode, siblings=siblings,
+                           mapping_mode=mapping_mode, mapping_rows=mapping_rows,
                            multi_mode=multi_mode, rebinding=rebinding,
                            adding_from_session=adding_from_session,
                            pending_bank_name=db.get_setting("pending_bank_name"),
@@ -1456,11 +1625,12 @@ def pick_account_post():
     if request.form.get("mapping_mode") == "1":
         accounts = _decorate_picker_accounts(json.loads(db.get_setting("pending_auth_accounts") or "[]"))
         valid_uids = {a["_uid"] for a in accounts if a.get("_uid")}
-        siblings = _reauth_sibling_accounts()
         mapping = []
         used = set()
-        for a in siblings:
-            uid = (request.form.get("map_%s" % a["id"]) or "").strip()
+        allowed = {}
+        names = {}
+        for row, options, _matched in _mapping_rows(accounts):
+            uid = (request.form.get("map_%s" % row["id"]) or "").strip()
             if not uid:
                 continue
             # Only ever write a uid this session actually returned, and never
@@ -1470,9 +1640,28 @@ def pick_account_post():
             if uid in used:
                 return redirect(url_for("pick_account") + "?error=Each bank account can only be linked to one Bridge Bank account. Please review your selection.")
             used.add(uid)
-            mapping.append((a["id"], uid))
+            allowed[row["id"]] = {o["_uid"] for o in options}
+            names[row["id"]] = row.get("actual_account")
+            mapping.append((row["id"], uid))
         if not mapping:
             return redirect(url_for("pick_account") + "?error=Please choose at least one account to reconnect.")
+        # Nor at one a stored account keeps using: a row left on "Do not
+        # reconnect" still imports that bank account, so linking a second row
+        # to it lands the same transactions in two Actual accounts. Rows being
+        # remapped in this same form are free to trade theirs.
+        stored = db.get_all_bank_accounts()
+        remapped = {account_id for account_id, _uid in mapping}
+        for account_id, uid in mapping:
+            holder = next((a for a in stored if a.get("account_uid") == uid
+                           and a["id"] != account_id and a["id"] not in remapped), None)
+            if holder:
+                return redirect(url_for("pick_account") + "?error=" + quote(
+                    'That bank account already syncs into "%s". Each bank account can only be '
+                    'linked to one Bridge Bank account.' % holder.get("actual_account")))
+            if uid not in allowed[account_id]:
+                return redirect(url_for("pick_account") + "?error=" + quote(
+                    'That bank account cannot be linked to "%s". Please review your selection.'
+                    % names[account_id]))
         try:
             _save_reauth_mapping(session_id, valid_until, mapping)
         except Exception as e:
@@ -1644,7 +1833,8 @@ def status():
     return render_template("status.html",
         syncs=syncs,
         all_accounts=all_accounts,
-        picker_pending=bool(db.get_setting("pending_auth_accounts")),
+        picker_kind=_pending_picker_kind(),
+        pending_bank_name=db.get_setting("pending_bank_name"),
         days_left=days_left,
         last_sync=last_sync,
         sync_time=config.SYNC_TIME,

@@ -246,6 +246,22 @@ class MappingSubmitTest(_IsolatedDbTest):
         self.assertEqual(row["session_id"], "ing-sess")
         self.assertEqual(row["account_uid"], "ing-uid")
 
+    def test_bank_account_another_stored_account_syncs_is_refused(self):
+        # Uids are new in every session, so only a stale or forged form gets
+        # here, but the result would be one bank account importing into two
+        # Actual accounts.
+        a = _add("Openbank")
+        _add("Openbank Betaal")
+        _add("ING", bank="ING", session="ing-sess", uid="new-a")
+        _pending_reauth(a)
+        body = self.client.get("/pick-account").get_data(as_text=True)
+        self.assertNotIn('value="new-a"', body)
+        resp = self.client.post("/pick-account", data={
+            "session_id": "new-sess", "mapping_mode": "1", "map_%s" % a: "new-a",
+        })
+        self.assertIn("error=", resp.headers["Location"])
+        self.assertEqual(appdb.get_bank_account(a)["session_id"], "old-sess")
+
     def test_stale_session_submission_is_ignored(self):
         a = _add("Openbank")
         b = _add("Openbank Betaal")
