@@ -583,6 +583,29 @@ def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee
     candidates.sort(key=lambda pair: pair[0])
     return candidates[0][1]
 
+def _find_pending_for_booking(existing, pending_map, ref):
+    """Find the pending copy of a booking whose amount or date changed on settling.
+
+    pending_map is keyed on date|amount, so a booking that settles for a
+    different amount (a tip added to a ride, a hotel or fuel pre-authorisation,
+    a card payment in another currency) never finds its pending copy there.
+    reconcile_transaction then matches that copy on financial_id, because banks
+    like Revolut keep one entry_reference from pending to booked, and updates
+    everything except the amount: the pending amount stays in Actual for good
+    and the pending_map entry is never cleared.
+
+    Returns (pending_map key, transaction) or None. Only a reference match
+    counts; without one, two card payments at one merchant cannot be told apart.
+    """
+    if not ref:
+        return None
+    key_by_txn_id = {txn_id: key for key, txn_id in pending_map.items()}
+    for t in existing:
+        key = key_by_txn_id.get(str(t.id))
+        if key is not None and t.financial_id == ref:
+            return key, t
+    return None
+
 def _record_reconciled_transaction(transaction, existing_ids: set[str], new_txn: list) -> str:
     txn_id = str(transaction.id)
     is_new_txn = txn_id not in existing_ids
@@ -967,6 +990,18 @@ def _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=Fal
         t for t in transactions
         if _is_transfer_candidate(t, account_ids, allow_existing_transfers)
     ]
+    # Pairs that are already linked to each other across accounts need no
+    # repair, and leaving them in makes a second transfer of the same amount a
+    # few days later look ambiguous, so that one is never repaired. Regular
+    # top-ups of a round sum (110 on Monday, 110 again on Tuesday) hit this.
+    by_id = {t.id: t for t in candidates}
+    linked = {
+        t.id for t in candidates
+        if (other := by_id.get(_txn_transfer_id(t))) is not None
+        and _txn_transfer_id(other) == t.id
+        and _txn_account_id(other) != _txn_account_id(t)
+    }
+    candidates = [t for t in candidates if t.id not in linked]
     outgoing = [t for t in candidates if getattr(t, "amount", 0) < 0]
     incoming = [t for t in candidates if getattr(t, "amount", 0) > 0]
 
@@ -1336,6 +1371,14 @@ def _sync_account(account, state):
                                     del pending_map[key]
                                     if ref: imported_refs.add(ref)
                                     skipped += 1
+                            elif (settled := _find_pending_for_booking(existing, pending_map, ref)):
+                                pending_key, existing_txn = settled
+                                existing_txn.set_amount(amount)
+                                existing_txn.cleared = True
+                                del pending_map[pending_key]
+                                claimed_ids.add(str(existing_txn.id))
+                                imported_refs.add(ref)
+                                updated += 1
                             else:
                                 duplicate = None
                                 if not ref:
