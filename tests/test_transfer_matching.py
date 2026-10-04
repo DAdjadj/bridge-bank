@@ -69,6 +69,42 @@ class TransferMatchingTest(unittest.TestCase):
 
         self.assertEqual(pairs, [(source, dest)])
 
+    def test_an_already_linked_pair_does_not_make_the_next_one_ambiguous(self):
+        """110 moved on Monday and again on Tuesday: Monday's linked pair is no rival."""
+        monday_out = txn("monday-out", "personal", -11000, "2026-07-15", transferred_id="monday-in")
+        monday_in = txn("monday-in", "pro", 11000, "2026-07-15", transferred_id="monday-out")
+        tuesday_out = txn("tuesday-out", "personal", -11000, "2026-07-16", transferred_id="generated-in")
+        tuesday_in = txn("tuesday-in", "pro", 11000, "2026-07-16", transferred_id="self-generated")
+
+        pairs = _find_transfer_pairs(
+            [monday_out, monday_in, tuesday_out, tuesday_in],
+            {"personal", "pro"},
+            allow_existing_transfers=True,
+        )
+
+        self.assertEqual(pairs, [(tuesday_out, tuesday_in)])
+
+    def test_repairs_a_transfer_a_rule_pointed_at_its_own_account(self):
+        """A rule matching the bank text on both legs links the incoming leg to itself."""
+        source = txn("source", "personal", -11000, "2026-07-16", transferred_id="generated-in")
+        dest = txn("dest", "pro", 11000, "2026-07-16", transferred_id="self-generated")
+        generated_in = txn("generated-in", "pro", 11000, "2026-07-16",
+                           financial_id=None, transferred_id="source", tombstone=0)
+        self_generated = txn("self-generated", "pro", -11000, "2026-07-16",
+                             financial_id=None, transferred_id="dest", tombstone=0)
+        txn_by_id = {t.id: t for t in [source, dest, generated_in, self_generated]}
+        session = SimpleNamespace(added=[])
+        session.add = session.added.append
+
+        self.assertTrue(
+            _can_relink_imported_pair(source, dest, txn_by_id, {"personal", "pro"})
+        )
+        removed = _remove_generated_counterparts(session, source, dest, txn_by_id)
+
+        self.assertEqual(removed, 2)
+        self.assertEqual(generated_in.tombstone, 1)
+        self.assertEqual(self_generated.tombstone, 1)
+
     def test_requires_imported_bank_transactions(self):
         source = txn("source", "checking", -2500, "2026-05-01", financial_id=None)
         dest = txn("dest", "savings", 2500, "2026-05-01")
