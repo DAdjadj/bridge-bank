@@ -546,8 +546,8 @@ def _parse_notes(t):
 def _get_entry_ref(t):
     return t.get("entry_reference") or t.get("transaction_id") or ""
 
-def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee):
-    """Find the copy we already imported of a booking the bank gave us no reference for.
+def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee, live_refs=None):
+    """Find the copy we already imported of a booking we cannot match by reference.
 
     entry_reference is optional in the underlying spec and some banks leave it
     empty, so imported_refs can never remember those bookings and every sync
@@ -562,8 +562,13 @@ def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee
     copy, and every sync re-fetches the whole current day, so both bookings are
     always weighed against the copies together and the surplus gets added.
 
-    Only used when there is no reference at all. Bookings that carry one keep
-    deduping on it alone, so this cannot merge anything for a bank that works.
+    live_refs is passed for a booking whose reference we have never seen. Banks
+    sometimes renumber their transactions (Bankinter PT on every fetch, a bank
+    moving to a new Enable Banking connector on reconnect), and the old copy
+    then carries a reference the bank no longer sends. Only such copies are
+    candidates: imported by us (financial_id set) and with a reference absent
+    from the current fetch. A copy whose reference is still live belongs to a
+    different booking, so for a bank that works nothing can ever qualify.
     """
     target_amount = round(decimal.Decimal(amount) * 100)
     wanted        = (imported_payee or "").strip()
@@ -571,6 +576,10 @@ def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee
     for t in existing:
         if str(t.id) in claimed_ids or t.is_child:
             continue
+        if live_refs is not None:
+            old_ref = getattr(t, "financial_id", None)
+            if not old_ref or old_ref in live_refs:
+                continue
         if t.amount != target_amount:
             continue
         if (t.imported_description or "").strip() != wanted:
@@ -1291,6 +1300,7 @@ def _sync_account(account, state):
 
     pending_map_start = dict(pending_map)
     imported_refs_start = set(acct_state.get("imported_refs", []))
+    live_refs = {r for r in (_get_entry_ref(t) for t in raw) if r}
 
     def write_transactions_to_actual():
         pending_map = dict(pending_map_start)
@@ -1380,13 +1390,21 @@ def _sync_account(account, state):
                                 imported_refs.add(ref)
                                 updated += 1
                             else:
-                                duplicate = None
-                                if not ref:
-                                    duplicate = _find_imported_duplicate(
-                                        existing, claimed_ids, date, amount, payee
-                                    )
+                                duplicate = _find_imported_duplicate(
+                                    existing, claimed_ids, date, amount, payee,
+                                    live_refs=live_refs if ref else None,
+                                )
                                 if duplicate is not None:
                                     claimed_ids.add(str(duplicate.id))
+                                    if ref:
+                                        log.info("%s: bank changed a transaction's reference "
+                                                 "(%s -> %s); kept the existing copy",
+                                                 bank_label, duplicate.financial_id, ref)
+                                        duplicate.financial_id = ref
+                                        imported_refs.add(ref)
+                                        for k, v in list(pending_map.items()):
+                                            if v == str(duplicate.id):
+                                                del pending_map[k]
                                     if not duplicate.cleared:
                                         duplicate.cleared = True
                                     result = _record_reconciled_transaction(duplicate, existing_ids, new_txn)
