@@ -368,17 +368,21 @@ def index():
 @app.route("/setup", methods=["GET", "POST"])
 def setup_license():
     error = None
+    limit_reached = False
     if request.method == "POST":
         key = request.form.get("license_key", "").strip()
-        result = licence.activate(key)
+        replace_others = request.form.get("replace_others") == "1"
+        result = licence.activate(key, replace_others=replace_others)
         if not result["valid"] and not result.get("offline"):
             error = result["error"] or "Invalid license key."
+            limit_reached = bool(result.get("limit_reached"))
         else:
             config.set("LICENCE_KEY", key)
             return redirect(url_for("setup_actual"))
     return render_template("setup_license.html",
         error=error,
-        license_key=config.LICENCE_KEY,
+        limit_reached=limit_reached,
+        license_key=(request.form.get("license_key", "").strip() if limit_reached else config.LICENCE_KEY),
         active="license",
     )
 

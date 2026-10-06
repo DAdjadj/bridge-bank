@@ -20,6 +20,17 @@
       <div class="alert alert-error">{{ error }}</div>
     {% endif %}
   {% endif %}
+  {% if limit_reached %}
+    <div class="card" style="border-color:#8a5a2b;">
+      <div class="card-title" style="font-size:15px;">All activations are in use</div>
+      <div class="card-sub">This licence is still registered to earlier installations of Bridge Bank. That happens after a reinstall, a wiped data folder (for example <code>docker compose down -v</code>) or a move to a new server. If those installations are gone, release them and activate here. Their bank connections will need to be connected again.</div>
+      <form method="POST" onsubmit="return confirm('Release every other installation of this licence and activate here? Any other Bridge Bank installation still running will stop syncing.');">
+        <input type="hidden" name="license_key" value="{{ license_key }}">
+        <input type="hidden" name="replace_others" value="1">
+        <button type="submit" class="btn">Release previous installations and activate here</button>
+      </form>
+    </div>
+  {% endif %}
   <form method="POST">
     <label for="license_key" style="margin-top:0;">License key</label>
     <input type="text" id="license_key" name="license_key" value="{{ license_key }}" placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" autocomplete="off" autofocus required>

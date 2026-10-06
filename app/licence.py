@@ -91,19 +91,25 @@ def _post_json(path, payload, timeout=10):
         data = {}
     return resp, data
 
-def activate(key):
+def activate(key, replace_others=False):
+    """Activate this installation. With replace_others=True and every slot
+    taken, the server releases all other installations (and their bank
+    slots) first, for when those installations were wiped or removed."""
     fp = _get_fingerprint()
+    payload = {"license_key": key, "machine_fingerprint": fp, "instance_name": "bridge-bank"}
+    if replace_others:
+        payload["replace_others"] = True
     try:
-        resp, data = _post_json(
-            "/activate",
-            {"license_key": key, "machine_fingerprint": fp, "instance_name": "bridge-bank"},
-        )
+        resp, data = _post_json("/activate", payload)
         if resp.status_code in (200, 201) and data.get("valid"):
             db.set_setting("licence_key", key)
+            if data.get("removed_activations"):
+                logger.info("Released %s activation(s) and %s bank slot(s) from previous installations",
+                            data.get("removed_activations"), data.get("removed_seats"))
             return {"valid": True, "error": None}
         elif resp.status_code == 409:
             msg = data.get("error") or "Activation limit reached for this licence."
-            return {"valid": False, "error": msg}
+            return {"valid": False, "error": msg, "limit_reached": bool(data.get("limit_reached"))}
         else:
             msg = data.get("error") or "Invalid license key."
             return {"valid": False, "error": msg}
