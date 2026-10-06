@@ -324,8 +324,8 @@ def _connected_banks(accounts):
             seen.append(entry)
     return seen
 
-def _actual_account_names():
-    """Account names from Actual Budget; empty when it cannot be reached."""
+def _actual_accounts():
+    """Accounts in Actual Budget as {id, name, closed}; empty when it cannot be reached."""
     try:
         from actual import Actual
         from actual.queries import get_accounts
@@ -334,10 +334,15 @@ def _actual_account_names():
         with Actual(base_url=config.ACTUAL_URL, password=config.ACTUAL_PASSWORD,
                     encryption_password=config.ACTUAL_ENCRYPTION_PASSWORD or None,
                     file=config.ACTUAL_SYNC_ID, data_dir="/data/actual-cache") as actual:
-            return [a.name for a in get_accounts(actual.session)]
+            return [{"id": a.id, "name": a.name, "closed": bool(a.closed)}
+                    for a in get_accounts(actual.session)]
     except Exception as e:
         logger.error("Failed to list Actual accounts: %s", e)
         return []
+
+def _actual_account_names():
+    """Account names from Actual Budget; empty when it cannot be reached."""
+    return [a["name"] for a in _actual_accounts()]
 
 COUNTRIES = [
     ("AT","Austria"),("BE","Belgium"),("HR","Croatia"),("CY","Cyprus"),
@@ -764,8 +769,66 @@ def providers_api():
 
 @app.route("/api/actual-accounts")
 def actual_accounts_api():
-    """List account names from Actual Budget for validation/autocomplete."""
-    return jsonify(_actual_account_names())
+    """List account names from Actual Budget for validation/autocomplete.
+
+    With ?detail=1, the open accounts as {id, name, synced_by}, for choosing
+    which one a bank syncs into; synced_by names the bank account already
+    syncing into it, if any.
+    """
+    if request.args.get("detail") != "1":
+        return jsonify(_actual_account_names())
+    holders = {a.get("actual_account_id"): a for a in db.get_all_bank_accounts()
+               if a.get("actual_account_id")}
+    return jsonify([
+        {"id": a["id"], "name": a["name"],
+         "synced_by": holders[a["id"]]["id"] if a["id"] in holders else None}
+        for a in _actual_accounts() if not a["closed"]
+    ])
+
+@app.route("/bank/actual-account", methods=["POST"])
+def change_actual_account():
+    """Point one bank account at a different Actual account, by id."""
+    try:
+        account_id = int(request.form.get("account_id", ""))
+    except ValueError:
+        return redirect(url_for("bank") + "?error=" + quote("Invalid account."))
+    target_id = (request.form.get("actual_account_id") or "").strip()
+    account = db.get_bank_account(account_id)
+    if not account:
+        return redirect(url_for("bank") + "?error=" + quote("That bank account no longer exists."))
+    available = _actual_accounts()
+    if not available:
+        return redirect(url_for("bank") + "?error=" + quote(
+            "Could not reach Actual Budget to check the account. Please try again."))
+    target = next((a for a in available if a["id"] == target_id), None)
+    if not target or target["closed"]:
+        return redirect(url_for("bank") + "?error=" + quote(
+            "That account is not an open account in Actual Budget. Please choose another."))
+    # Two bank accounts writing into one Actual account would merge two
+    # balances and double up transfers between them.
+    holder = next((a for a in db.get_all_bank_accounts()
+                   if a["id"] != account_id and a.get("actual_account_id") == target_id), None)
+    if holder:
+        return redirect(url_for("bank") + "?error=" + quote(
+            '"%s" already receives transactions from %s. Each Actual Budget account can only '
+            'be synced by one bank account.' % (target["name"], holder.get("bank_name") or "another bank")))
+    if account.get("actual_account_id") == target_id:
+        db.update_bank_account_field(account_id, "actual_account", target["name"])
+        return redirect(url_for("bank"))
+    db.update_bank_account_field(account_id, "actual_account_id", target_id)
+    db.update_bank_account_field(account_id, "actual_account", target["name"])
+    # Pending transactions were imported into the previous account. Left in
+    # the state, their booked versions would look for them in the new one,
+    # not find them and be skipped as deleted. Cleared, they import as new.
+    from .. import sync as sync_mod
+    state = sync_mod._load_state()
+    acct_state = state.get("accounts", {}).get(str(account_id))
+    if acct_state and acct_state.get("pending_map"):
+        acct_state["pending_map"] = {}
+        sync_mod._save_state(state)
+    logger.info('Bank account %s now syncs into "%s" (was "%s")',
+                account_id, target["name"], account.get("actual_account"))
+    return redirect(url_for("bank"))
 
 # ---------------------------------------------------------------------------
 # Connect (bank OAuth)

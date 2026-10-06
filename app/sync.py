@@ -1111,6 +1111,134 @@ def _get_transfer_match_start(accounts):
         return min(dates)
     return datetime.date.today() - datetime.timedelta(days=90)
 
+class ActualAccountError(Exception):
+    """The Actual account a bank syncs into cannot be used as it stands.
+
+    The message is shown to the customer, so it says what happened and what to
+    do. Nothing is imported or created when this is raised.
+    """
+
+def _has_sync_history(account, state):
+    return bool(state.get("accounts", {}).get(str(account.get("id")), {}).get("last_sync_date"))
+
+def _remember_actual_account(account, obj):
+    """Store the Actual account's id and current name on the bank account row."""
+    if account.get("actual_account_id") == obj.id and account.get("actual_account") == obj.name:
+        return
+    account["actual_account_id"] = obj.id
+    account["actual_account"] = obj.name
+    if account.get("id") is None:
+        return
+    try:
+        db.update_bank_account_field(account["id"], "actual_account_id", obj.id)
+        db.update_bank_account_field(account["id"], "actual_account", obj.name)
+    except Exception as e:
+        log.warning("Could not remember the Actual account for %s: %s", bank_label(account), e)
+
+def resolve_actual_account(session, account, create=False, has_history=False):
+    """The Actual account this bank account syncs into, found by id first.
+
+    Actual lets people rename accounts freely, so the id is what identifies
+    one; the stored name is only the last name seen. Looking up by name alone
+    meant a rename made the next sync create a fresh account under the old name
+    and import into that, and for a balance-only account (which replaces every
+    transaction in its Actual account) an unrelated account later given the old
+    name would have been wiped.
+
+    In order:
+    - the stored id, if that account still exists: renames are followed;
+    - otherwise the stored name, but only an open account no other bank account
+      already syncs into, and only when exactly one matches (the id is gone
+      when the budget file was replaced or the account deleted and re-created);
+    - otherwise a new account, but only for a bank account that has never
+      synced: one that has lost its account is reported instead, because
+      creating a replacement would import into an account nobody asked for.
+
+    Returns None only when create is False and a new account would be needed.
+    A created account is not remembered until a later sync finds it committed,
+    so a failed commit cannot leave a dangling id behind.
+    """
+    from actual.database import Accounts
+    from sqlmodel import select
+
+    name = account.get("actual_account") or config.ACTUAL_ACCOUNT
+    bound_id = account.get("actual_account_id") or ""
+    live = session.exec(select(Accounts).where(Accounts.tombstone == 0)).all()
+
+    if bound_id:
+        obj = next((a for a in live if a.id == bound_id), None)
+        if obj is not None:
+            if obj.closed:
+                raise ActualAccountError(
+                    f'"{obj.name}" is closed in Actual Budget, so nothing was imported. Reopen it in '
+                    'Actual Budget, or choose another account for this bank on the Bank page.')
+            if obj.name != name:
+                log.info('"%s" was renamed to "%s" in Actual Budget. %s keeps syncing into it.',
+                         name, obj.name, account.get("bank_name") or "This bank")
+            _remember_actual_account(account, obj)
+            return obj
+
+    taken = {
+        a.get("actual_account_id") for a in db.get_all_bank_accounts()
+        if a.get("id") != account.get("id") and a.get("actual_account_id")
+    }
+    named = [a for a in live if a.name == name]
+    free = [a for a in named if a.id not in taken]
+    usable = [a for a in free if not a.closed]
+    if len(usable) == 1:
+        if bound_id:
+            log.warning('The Actual Budget account %s synced into is gone. Syncing into the account '
+                        'named "%s" instead.', bank_label(account), name)
+        _remember_actual_account(account, usable[0])
+        return usable[0]
+    if len(usable) > 1:
+        raise ActualAccountError(
+            f'Actual Budget has {len(usable)} open accounts named "{name}", so nothing was imported. '
+            'Rename all but one in Actual Budget, or choose the account on the Bank page.')
+    if free:
+        raise ActualAccountError(
+            f'"{name}" is closed in Actual Budget, so nothing was imported. Reopen it in '
+            'Actual Budget, or choose another account for this bank on the Bank page.')
+    if named:
+        raise ActualAccountError(
+            f'"{name}" in Actual Budget already receives another bank\'s transactions, so nothing '
+            'was imported. Choose a different account for this bank on the Bank page.')
+    if bound_id or has_history:
+        raise ActualAccountError(
+            f'The Actual Budget account "{name}" this bank synced into no longer exists (it was '
+            'renamed or deleted before Bridge Bank could follow it), so nothing was imported. '
+            'Choose the account to sync into on the Bank page.')
+    if not create:
+        return None
+    from actual.queries import create_account
+    log.info('Creating the account "%s" in Actual Budget.', name)
+    return create_account(session, name)
+
+def check_actual_accounts(accounts, state):
+    """Bind every bank account to its Actual account and pick up renames.
+
+    Runs once before a sync so names shown in labels, logs and emails are
+    current, and so an account that cannot be synced is reported before its
+    bank is asked for transactions (some banks allow only a few fetches a day).
+    Returns {bank account id: message} for the accounts that cannot sync. If
+    Actual cannot be reached nothing is reported here: each account's own
+    sync then fails with the connection error (and its retries, so none are
+    added here).
+    """
+    problems = {}
+    try:
+        with _actual_client("Actual accounts") as actual:
+            with _actual_phase("Actual accounts", "match bank accounts to Actual accounts"):
+                for a in accounts:
+                    try:
+                        resolve_actual_account(actual.session, a, has_history=_has_sync_history(a, state))
+                    except ActualAccountError as e:
+                        problems[a.get("id")] = str(e)
+    except Exception as e:
+        log.warning("Could not check the Actual Budget accounts before syncing: %s", e)
+        return {}
+    return problems
+
 def _auto_link_internal_transfers(actual, accounts):
     if not _config_flag("AUTO_LINK_TRANSFERS", True):
         return 0
@@ -1119,20 +1247,22 @@ def _auto_link_internal_transfers(actual, accounts):
         a for a in accounts
         if a.get("sync_mode") != "balance" and a.get("actual_account")
     ]
-    actual_account_names = sorted({a["actual_account"] for a in transfer_accounts})
-    if len(actual_account_names) < 2:
+    if len(transfer_accounts) < 2:
         return 0
 
-    from actual.queries import get_account, get_payees, get_transactions
+    from actual.queries import get_payees, get_transactions
 
     account_by_id = {}
     transactions = []
     start_date = _get_transfer_match_start(transfer_accounts)
     end_date = datetime.date.today() + datetime.timedelta(days=1)
 
-    for name in actual_account_names:
-        account_obj = get_account(actual.session, name)
-        if not account_obj:
+    for a in transfer_accounts:
+        try:
+            account_obj = resolve_actual_account(actual.session, a)
+        except ActualAccountError:
+            continue
+        if not account_obj or account_obj.id in account_by_id:
             continue
         account_by_id[account_obj.id] = account_obj
         transactions.extend(
@@ -1204,11 +1334,11 @@ def _sync_balance_account(account):
         return False, 0, msg
 
     def write_balance_to_actual():
-        from actual.queries import get_or_create_account, get_transactions, create_transaction
+        from actual.queries import get_transactions, create_transaction
 
         with _actual_client(bank_label) as actual:
             with _actual_phase(bank_label, "load Actual balance account"):
-                account_obj = get_or_create_account(actual.session, actual_name)
+                account_obj = resolve_actual_account(actual.session, account, create=True)
                 existing = list(get_transactions(actual.session, account=account_obj))
 
             with _actual_phase(bank_label, "replace balance transaction"):
@@ -1242,6 +1372,10 @@ def _sync_balance_account(account):
 
     try:
         tx_count = _run_actual_with_retries(bank_label, write_balance_to_actual)
+    except ActualAccountError as e:
+        msg = f"{bank_label}: {e}"
+        log.error(msg)
+        return False, 0, msg
     except Exception as e:
         msg = f"{bank_label}: Could not connect to Actual Budget: {e}"
         log.error(msg)
@@ -1258,7 +1392,6 @@ def _sync_account(account, state):
     account_id = str(account["id"])
     actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
     bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
-    actual_account_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
 
     try:
         _, account_uid = _get_session(account)
@@ -1298,6 +1431,7 @@ def _sync_account(account, state):
         state["accounts"][account_id] = acct_state
         return True, 0, "OK"
 
+    has_history = bool(acct_state.get("last_sync_date"))
     pending_map_start = dict(pending_map)
     imported_refs_start = set(acct_state.get("imported_refs", []))
     live_refs = {r for r in (_get_entry_ref(t) for t in raw) if r}
@@ -1306,11 +1440,12 @@ def _sync_account(account, state):
         pending_map = dict(pending_map_start)
         imported_refs = set(imported_refs_start)
         added = updated = skipped = 0
-        from actual.queries import get_or_create_account, reconcile_transaction, get_transactions, create_transaction
+        from actual.queries import reconcile_transaction, get_transactions, create_transaction
 
         with _actual_client(bank_label) as actual:
             with _actual_phase(bank_label, "load Actual account and existing transactions"):
-                account_obj    = get_or_create_account(actual.session, actual_account_name)
+                account_obj    = resolve_actual_account(actual.session, account, create=True,
+                                                        has_history=has_history)
                 existing       = list(get_transactions(actual.session, account=account_obj))
                 existing_ids   = {str(t.id) for t in existing}
                 already_matched = existing[:]
@@ -1460,6 +1595,10 @@ def _sync_account(account, state):
             bank_label,
             write_transactions_to_actual,
         )
+    except ActualAccountError as e:
+        msg = f"{bank_label}: {e}"
+        log.error(msg)
+        return False, 0, msg
     except Exception as e:
         msg = f"{bank_label}: Could not connect to Actual Budget at {config.ACTUAL_URL}. Error: {e}"
         log.error(msg)
@@ -1550,6 +1689,11 @@ def run(only_account_id=None):
     else:
         db.set_setting("license_bank_limit_error", "")
 
+    state = _load_state()
+    # Before any bank is asked for transactions: binds each account to its
+    # Actual account id, so a rename in Actual shows up in every label below.
+    account_problems = check_actual_accounts(all_accounts, state)
+
     if only_account_id is not None:
         accounts_to_sync = [a for a in all_accounts if a.get("id") == only_account_id]
         if not accounts_to_sync:
@@ -1560,15 +1704,21 @@ def run(only_account_id=None):
     else:
         accounts_to_sync = all_accounts
 
-    state = _load_state()
     total_added = 0
     errors = []
     successes = []
 
     for i, account in enumerate(accounts_to_sync):
+        label = bank_label(account)
+        problem = account_problems.get(account.get("id"))
+        if problem:
+            msg = f"{label}: {problem}"
+            log.error(msg)
+            errors.append(msg)
+            db.log_sync("failure", tx_count=0, message=msg)
+            continue
         if i > 0:
             time.sleep(2)
-        label = bank_label(account)
         try:
             success, added, msg = _sync_account(account, state)
             if success:
