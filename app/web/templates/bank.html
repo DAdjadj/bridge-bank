@@ -108,7 +108,16 @@
             {% else %}
             {{ loop.index }}. {{ a.bank_name }} ({{ a.bank_country }}) &rarr; {{ a.actual_account }}
             {% endif %}
+            <button type="button" id="change-actual-btn-{{ a.id }}" onclick="openActualPicker({{ a.id }})" style="background:none;border:none;cursor:pointer;font-size:11px;color:#94a3b8;text-decoration:underline;padding:0;margin-left:6px;">Change</button>
           </div>
+          <form method="POST" action="/bank/actual-account" id="change-actual-form-{{ a.id }}" style="display:none;margin-top:8px;gap:4px;align-items:center;flex-wrap:wrap;"
+                data-balance="{{ '1' if a.sync_mode == 'balance' else '0' }}" data-current="{{ a.actual_account_id or '' }}"
+                onsubmit="return confirmActualChange(this);">
+            <input type="hidden" name="account_id" value="{{ a.id }}">
+            <select name="actual_account_id" required style="font-size:11px;padding:4px 6px;max-width:220px;"><option value="">Loading accounts...</option></select>
+            <button type="submit" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;">Save</button>
+            <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;color:#4a5568;" onclick="this.parentElement.style.display='none';document.getElementById('change-actual-btn-{{ a.id }}').style.display='';">Cancel</button>
+          </form>
         </div>
         <div style="display:flex;gap:6px;">
           <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;" onclick="syncAccount({{ a.id }}, this)">Sync now</button>
@@ -276,6 +285,49 @@
 <script>
   // Sync a single bank on demand, without touching the others (avoids hitting
   // every bank's rate limit when you only need to refresh one).
+  // The Actual account a bank syncs into is stored by id, so renaming it in
+  // Actual needs nothing here; this is for pointing a bank somewhere else.
+  function openActualPicker(id) {
+    var form = document.getElementById('change-actual-form-' + id);
+    var select = form.querySelector('select');
+    document.getElementById('change-actual-btn-' + id).style.display = 'none';
+    form.style.display = 'flex';
+    fetch('/api/actual-accounts?detail=1').then(function (r) { return r.json(); }).then(function (accounts) {
+      select.innerHTML = '';
+      if (!accounts.length) {
+        select.innerHTML = '<option value="">Could not reach Actual Budget</option>';
+        return;
+      }
+      var placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Choose an Actual Budget account';
+      select.appendChild(placeholder);
+      accounts.forEach(function (acc) {
+        var opt = document.createElement('option');
+        opt.value = acc.id;
+        opt.textContent = acc.name;
+        if (acc.synced_by && acc.synced_by !== id) {
+          opt.disabled = true;
+          opt.textContent = acc.name + ' (synced by another bank)';
+        }
+        if (acc.id === form.dataset.current) opt.selected = true;
+        select.appendChild(opt);
+      });
+    }).catch(function () {
+      select.innerHTML = '<option value="">Could not reach Actual Budget</option>';
+    });
+  }
+
+  function confirmActualChange(form) {
+    var select = form.querySelector('select');
+    if (!select.value || select.value === form.dataset.current) return true;
+    var name = select.options[select.selectedIndex].textContent;
+    if (form.dataset.balance === '1') {
+      return confirm('Sync the balance into "' + name + '"? Balance-only syncing replaces every transaction in that account with a single balance entry, so only choose an account kept for this purpose.');
+    }
+    return confirm('Sync into "' + name + '" from the next sync? Transactions already imported stay in the current account. To import them into "' + name + '" as well, use Reset sync afterwards.');
+  }
+
   function syncAccount(id, btn) {
     var original = btn.textContent;
     btn.disabled = true;
