@@ -78,6 +78,8 @@ docker compose up -d
 
 Open **http://your-server-address:3002** in your browser. The setup wizard will guide you through the rest.
 
+> **In Actual Budget, create a plain account and nothing more.** Before you start the wizard, add an account in Actual for each bank (for example "Revolut") and leave it unlinked: don't set up bank sync, Enable Banking or GoCardless inside Actual. Bridge Bank makes the bank connection itself, and if Actual is also linked to the bank, every transaction comes in twice. The wizard asks for this account's name, which must match Actual exactly.
+
 ### Local SMTP relays
 
 Bridge Bank defaults to STARTTLS on port 587 for common hosted providers. For a trusted local relay on port 25, set these environment variables on the `bridge-bank` service:
