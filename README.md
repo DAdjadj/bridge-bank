@@ -59,6 +59,8 @@ Enable Banking is the regulated open banking provider that connects Bridge Bank 
 6. Select your country and bank from the dropdowns and click **Link**
 7. Follow the steps to log in to your bank and approve read-only access — this activates your Enable Banking app
 
+> **A consent of only 1 day here is normal.** This step is Enable Banking's own consent, used only to activate your application. The connection that actually syncs is made later inside Bridge Bank, which asks your bank for up to 180 days; its expiry date shows next to each account on the Bank page.
+
 > **The mode is permanent.** Enable Banking asks for Sandbox or Production at the top of the registration form, and applications cannot be moved between the two afterwards. A Sandbox application only returns simulated test data, so it will never connect to your real bank. If you already registered one in Sandbox, register a second application in Production and use that one.
 
 ### 3. Install Bridge Bank
