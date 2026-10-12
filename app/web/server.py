@@ -2306,4 +2306,10 @@ def start(host="0.0.0.0", port=3000):
         relay.revive(_relay_complete)
     except Exception as e:
         logger.warning("Could not revive auth relay poller: %s", e)
+    from .. import compose_scope
+    compose_scope.schedule(
+        120, container_name=CONTAINER_NAME, app_container="bridge-bank",
+        watchtower_container="bridge-bank-watchtower", scope="bridge-bank",
+        db=db, app_version=APP_VERSION,
+    )
     app.run(host=host, port=port, debug=False, use_reloader=False)
