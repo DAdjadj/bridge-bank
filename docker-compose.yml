@@ -2,6 +2,8 @@ services:
   bridge-bank:
     image: daalves/bridge-bank:latest
     container_name: bridge-bank
+    labels:
+      - com.centurylinklabs.watchtower.scope=bridge-bank
     restart: unless-stopped
     volumes:
       - ./data:/data
@@ -15,6 +17,8 @@ services:
   watchtower:
     image: nickfedor/watchtower
     container_name: bridge-bank-watchtower
+    labels:
+      - com.centurylinklabs.watchtower.scope=bridge-bank
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -25,3 +29,6 @@ services:
     environment:
       - WATCHTOWER_LOG_LEVEL=warn
       - WATCHTOWER_HTTP_API_TOKEN=bridge-bank-update
+      # Own scope, so a server-wide Watchtower on the same host neither removes
+      # this one as an "excess instance" nor gets removed by it.
+      - WATCHTOWER_SCOPE=bridge-bank

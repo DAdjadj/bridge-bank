@@ -2205,13 +2205,15 @@ def update_run():
     # Try Watchtower first (new setup), fall back to helper container (old setup)
     import requests as _requests
     try:
-        resp = _requests.get(
-            "http://bridge-bank-watchtower:8080/v1/update",
-            headers={"Authorization": "Bearer bridge-bank-update"},
-            timeout=120,
-        )
+        # Current nickfedor/watchtower only accepts POST here (GET gets a 405);
+        # older builds only accepted GET, so retry with GET when POST is refused.
+        url = "http://bridge-bank-watchtower:8080/v1/update"
+        headers = {"Authorization": "Bearer bridge-bank-update"}
+        resp = _requests.post(url, headers=headers, params={"async": "true"}, timeout=120)
+        if resp.status_code in (404, 405):
+            resp = _requests.get(url, headers=headers, timeout=120)
         logger.info("Watchtower update response: %s %s", resp.status_code, resp.text.strip())
-        if resp.status_code == 200:
+        if resp.status_code in (200, 202):
             db.set_setting("update_available", "0")
             return jsonify({"updating": True})
     except Exception:

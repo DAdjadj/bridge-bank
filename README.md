@@ -174,6 +174,17 @@ Or run manually:
 docker compose pull && docker compose up -d
 ```
 
+**Running your own Watchtower too?** Current Watchtower versions delete duplicate instances on the same Docker host, which can remove `bridge-bank-watchtower` and with it in-app updates. The compose file gives Bridge Bank's Watchtower its own scope so both can coexist. If your install predates this, add to **both** services in `docker-compose.yml`:
+```yaml
+    labels:
+      - com.centurylinklabs.watchtower.scope=bridge-bank
+```
+and to the `environment:` list of the `watchtower` service:
+```yaml
+      - WATCHTOWER_SCOPE=bridge-bank
+```
+then run `docker compose up -d`.
+
 ---
 
 ## License deactivation
