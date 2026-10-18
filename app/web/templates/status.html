@@ -43,6 +43,30 @@
   </div>
 {% endif %}
 
+{% if show_budget_notice %}
+<div class="card" id="budget-notice" style="border-color:#3b82f6;padding:1.25rem 1.5rem;">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;">
+    <div>
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#60a5fa;margin-bottom:0.35rem;">New from Bridge Bank</div>
+      <div class="card-title" style="margin-bottom:0.35rem;">Bridge Budget is here</div>
+      <div class="card-sub" style="margin-bottom:1rem;">YNAB-style budgeting on your own Actual server: targets for every category, fund what's short in one click, clear reports, and a budget that works on your phone. Bridge Bank keeps bringing the transactions in.</div>
+      <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+        <a class="btn" href="https://bridgebank.app/budget?ref=bridge-bank-app" target="_blank" rel="noopener" onclick="hideBudgetNotice()" style="background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;padding:9px 18px;font-size:13px;">See Bridge Budget &rarr;</a>
+        <a href="#" onclick="event.preventDefault();hideBudgetNotice();" style="font-size:13px;color:#64748b;text-decoration:none;">Don't show again</a>
+      </div>
+    </div>
+    <button type="button" aria-label="Close" onclick="hideBudgetNotice()" style="background:none;border:none;color:#64748b;font-size:20px;line-height:1;cursor:pointer;padding:0;">&times;</button>
+  </div>
+</div>
+<script>
+function hideBudgetNotice() {
+  fetch('/budget-notice/dismiss', {method: 'POST'});
+  var el = document.getElementById('budget-notice');
+  if (el) el.remove();
+}
+</script>
+{% endif %}
+
 {% if show_review_prompt %}
 <div class="card" style="border-color:#3b82f6; border-width:1px;">
   <div class="card-title" style="margin-bottom:0.25rem;">How's Bridge Bank working for you?</div>

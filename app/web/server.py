@@ -1897,6 +1897,9 @@ def status():
             except Exception:
                 pass
 
+    # One-time note about Bridge Budget, until it's dismissed or opened.
+    show_budget_notice = not db.get_setting("budget_notice_dismissed")
+
     return render_template("status.html",
         syncs=syncs,
         all_accounts=all_accounts,
@@ -1928,6 +1931,7 @@ def status():
         streak=streak,
         fun_message=fun_message,
         show_review_prompt=show_review_prompt,
+        show_budget_notice=show_budget_notice,
         license_key=config.LICENCE_KEY,
     )
 
@@ -1996,6 +2000,11 @@ def sync_status():
 # ---------------------------------------------------------------------------
 # Review
 # ---------------------------------------------------------------------------
+
+@app.route("/budget-notice/dismiss", methods=["POST"])
+def budget_notice_dismiss():
+    db.set_setting("budget_notice_dismissed", "1")
+    return ("", 204)
 
 @app.route("/review/dismiss", methods=["POST"])
 def review_dismiss():
