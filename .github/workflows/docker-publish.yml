@@ -96,14 +96,11 @@ jobs:
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-          # SSH through Cloudflare Tunnel
-          # Copy docker-compose.yml to server
-          scp -o StrictHostKeyChecking=no \
-              -o ProxyCommand="cloudflared access ssh --hostname ssh-deploy.david-alves.com" \
-              -i ~/.ssh/deploy_key \
-              docker-compose.yml \
-              ${{ secrets.DEPLOY_SSH_USER }}@ssh-deploy.david-alves.com:/opt/docker/bridge-bank/docker-compose.yml
-
+          # SSH through Cloudflare Tunnel. Only the new image is pulled: the
+          # server's docker-compose.yml is its own (it has settings customers
+          # don't need), so this repo's copy is never written over it. A change
+          # to this repo's compose file that the server also needs is applied
+          # there by hand.
           ssh -o StrictHostKeyChecking=no \
               -o ProxyCommand="cloudflared access ssh --hostname ssh-deploy.david-alves.com" \
               -i ~/.ssh/deploy_key \
