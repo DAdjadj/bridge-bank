@@ -160,6 +160,96 @@ class TransferMatchingTest(unittest.TestCase):
         self.assertIsNone(generated_in.transferred_id)
         self.assertIsNone(generated_out.transferred_id)
 
+    def test_a_shop_payment_and_a_friend_paying_back_are_not_a_transfer(self):
+        """Apple charges 25.99 on one card; a friend sends 25.99 to the other account."""
+        apple = txn("apple", "business", -2599, "2026-10-25", imported_description="apple.com/bill")
+        miguel = txn("miguel", "personal", 2599, "2026-10-25", imported_description="Miguel Bastos")
+
+        pairs = _find_transfer_pairs(
+            [apple, miguel], {"business", "personal"},
+            named_refs={"bank-apple", "bank-miguel"}, own_names={"david alves"},
+        )
+
+        self.assertEqual(pairs, [])
+
+    def test_paying_someone_and_being_paid_by_them_is_not_a_transfer(self):
+        to_paulo = txn("to-paulo", "business", -1000, "2026-10-11", imported_description="Paulo Silva")
+        from_paulo = txn("from-paulo", "personal", 1000, "2026-10-12", imported_description="Paulo Silva")
+
+        pairs = _find_transfer_pairs(
+            [to_paulo, from_paulo], {"business", "personal"},
+            named_refs={"bank-to-paulo", "bank-from-paulo"}, own_names={"david alves"},
+        )
+
+        self.assertEqual(pairs, [])
+
+    def test_moves_that_name_nobody_still_pair(self):
+        """Revolut's "To EUR Pro" names no counterparty on either leg."""
+        out = txn("out", "personal", -7299, "2026-10-25", imported_description="To EUR Pro")
+        into = txn("in", "business", 7299, "2026-10-25", imported_description="To EUR Pro")
+
+        pairs = _find_transfer_pairs(
+            [out, into], {"business", "personal"},
+            named_refs={"bank-something-else"}, own_names={"david alves"},
+        )
+
+        self.assertEqual(pairs, [(out, into)])
+
+    def test_legs_naming_the_account_holder_still_pair(self):
+        out = txn("out", "n26", -44000, "2026-04-17", imported_description="DAVID ADJADJ ALVES")
+        into = txn("in", "revolut", 44000, "2026-04-18", imported_description="Top-Up by *9914")
+
+        pairs = _find_transfer_pairs(
+            [out, into], {"n26", "revolut"},
+            named_refs={"bank-out"}, own_names={"david alves"},
+        )
+
+        self.assertEqual(pairs, [(out, into)])
+
+    def test_someone_elses_payment_no_longer_makes_a_real_transfer_ambiguous(self):
+        out = txn("out", "personal", -7299, "2026-10-25", imported_description="To EUR Pro")
+        into = txn("in", "business", 7299, "2026-10-25", imported_description="To EUR Pro")
+        friend = txn("friend", "savings", 7299, "2026-10-25", imported_description="Miguel Bastos")
+
+        pairs = _find_transfer_pairs(
+            [out, into, friend], {"business", "personal", "savings"},
+            named_refs={"bank-friend"}, own_names={"david alves"},
+        )
+
+        self.assertEqual(pairs, [(out, into)])
+
+    def test_without_a_holder_name_two_different_names_never_pair(self):
+        apple = txn("apple", "business", -2599, "2026-10-25", imported_description="apple.com/bill")
+        miguel = txn("miguel", "personal", 2599, "2026-10-25", imported_description="Miguel Bastos")
+
+        pairs = _find_transfer_pairs(
+            [apple, miguel], {"business", "personal"},
+            named_refs={"bank-apple", "bank-miguel"}, own_names=set(),
+        )
+
+        self.assertEqual(pairs, [])
+
+    def test_without_a_holder_name_the_same_name_on_both_legs_may_be_the_holder(self):
+        out = txn("out", "ing", -5000, "2026-05-01", imported_description="J. SMITH JOHN")
+        into = txn("in", "n26", 5000, "2026-05-02", imported_description="John Smith")
+
+        pairs = _find_transfer_pairs(
+            [out, into], {"ing", "n26"},
+            named_refs={"bank-out", "bank-in"}, own_names=set(),
+        )
+
+        self.assertEqual(pairs, [(out, into)])
+
+    def test_transactions_imported_before_names_were_recorded_pair_as_before(self):
+        source = txn("source", "checking", -2500, "2026-05-01", imported_description="Someone")
+        dest = txn("dest", "savings", 2500, "2026-05-01", imported_description="Someone Else")
+
+        pairs = _find_transfer_pairs(
+            [source, dest], {"checking", "savings"}, own_names={"david alves"},
+        )
+
+        self.assertEqual(pairs, [(source, dest)])
+
     def test_does_not_relink_over_another_imported_transfer(self):
         source = txn("source", "checking", -2500, "2026-05-01", transferred_id="other")
         dest = txn("dest", "savings", 2500, "2026-05-01")

@@ -169,6 +169,40 @@ def _own_names():
     val = config.ACCOUNT_HOLDER_NAME or ""
     return {n.strip().lower() for n in val.split(",") if n.strip()}
 
+def _name_words(name):
+    """The words of a name, ignoring case and accents: 'Flávio ALVES' -> {'flavio', 'alves'}."""
+    import re, unicodedata
+    plain = unicodedata.normalize("NFKD", name or "")
+    plain = "".join(c for c in plain if not unicodedata.combining(c)).casefold()
+    return set(re.findall(r"[a-z0-9]+", plain))
+
+def _same_name(a, b):
+    """Whether two bank spellings are the same name ('David Alves', 'ALVES DAVID',
+    'DAVID ADJADJ ALVES'): every word of the shorter one is in the longer one.
+    One shared word is not enough, because relatives share a surname."""
+    wa, wb = _name_words(a), _name_words(b)
+    if not wa or not wb:
+        return False
+    short, longer = sorted((wa, wb), key=len)
+    return short <= longer and (len(short) >= 2 or short == longer)
+
+def _is_own_name(name, own_names):
+    return any(_same_name(name, own) for own in own_names)
+
+def _counterparty_name(t):
+    """Who the bank says the money went to or came from, or '' when it names nobody.
+
+    Moves between a person's own accounts often name nobody (Revolut's "To EUR
+    Pro"), while card payments and transfers to or from other people name them.
+    """
+    indic = (t.get("credit_debit_indicator") or t.get("credit_debit_indic", "")).upper()
+    party = "creditor" if indic == "DBIT" else "debtor"
+    return ((t.get(party) or {}).get("name") or t.get(f"{party}_name") or "").strip()
+
+def _names_someone_else(t, own_names):
+    name = _counterparty_name(t)
+    return bool(name) and not _is_own_name(name, own_names)
+
 def _make_headers():
     import jwt, uuid, glob
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
@@ -973,7 +1007,28 @@ def _is_transfer_candidate(txn, account_ids, allow_existing_transfer=False):
         return False
     return _txn_date(txn) is not None
 
-def _transfer_candidates_for(txn, candidates):
+def _could_be_own_transfer(a, b, named_refs, own_names):
+    """False when the bank named someone other than the account holder on
+    either side: then the two are separate payments that only share an amount
+    and a date, such as a shop payment and a friend paying the same sum back.
+
+    named_refs holds the bank references of transactions whose bank named a
+    counterparty at import. The name itself lives in Actual as the imported
+    payee, so it is checked again here in case the holder's name was added
+    after the import. Without a holder name, two different names still rule a
+    pair out; the same name on both legs might be the holder, so it may pair.
+    """
+    named = [t for t in (a, b) if getattr(t, "financial_id", None) in named_refs]
+    if not named:
+        return True
+    if own_names:
+        return all(_is_own_name(getattr(t, "imported_description", "") or "", own_names) for t in named)
+    if len(named) == 2:
+        return _same_name(getattr(a, "imported_description", "") or "",
+                          getattr(b, "imported_description", "") or "")
+    return True
+
+def _transfer_candidates_for(txn, candidates, named_refs=frozenset(), own_names=frozenset()):
     txn_date = _txn_date(txn)
     txn_account = _txn_account_id(txn)
     txn_amount = getattr(txn, "amount", 0)
@@ -985,6 +1040,8 @@ def _transfer_candidates_for(txn, candidates):
             continue
         if getattr(other, "amount", 0) != -txn_amount:
             continue
+        if not _could_be_own_transfer(txn, other, named_refs, own_names):
+            continue
         other_date = _txn_date(other)
         if other_date is None:
             continue
@@ -994,7 +1051,8 @@ def _transfer_candidates_for(txn, candidates):
     matches.sort(key=lambda item: (item[0], _txn_date(item[1]), str(item[1].id)))
     return [other for _, other in matches]
 
-def _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=False):
+def _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=False,
+                         named_refs=frozenset(), own_names=frozenset()):
     candidates = [
         t for t in transactions
         if _is_transfer_candidate(t, account_ids, allow_existing_transfers)
@@ -1014,13 +1072,14 @@ def _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=Fal
     outgoing = [t for t in candidates if getattr(t, "amount", 0) < 0]
     incoming = [t for t in candidates if getattr(t, "amount", 0) > 0]
 
-    incoming_matches = {t.id: _transfer_candidates_for(t, outgoing) for t in incoming}
+    incoming_matches = {t.id: _transfer_candidates_for(t, outgoing, named_refs, own_names)
+                        for t in incoming}
     pairs = []
     matched = set()
     for source in sorted(outgoing, key=lambda t: (_txn_date(t), abs(getattr(t, "amount", 0)), str(t.id))):
         if source.id in matched:
             continue
-        matches = _transfer_candidates_for(source, incoming)
+        matches = _transfer_candidates_for(source, incoming, named_refs, own_names)
         if len(matches) != 1:
             continue
         dest = matches[0]
@@ -1239,7 +1298,7 @@ def check_actual_accounts(accounts, state):
         return {}
     return problems
 
-def _auto_link_internal_transfers(actual, accounts):
+def _auto_link_internal_transfers(actual, accounts, named_refs=frozenset()):
     if not _config_flag("AUTO_LINK_TRANSFERS", True):
         return 0
 
@@ -1289,7 +1348,8 @@ def _auto_link_internal_transfers(actual, accounts):
 
     linked = removed = 0
     txn_by_id = {t.id: t for t in transactions}
-    for source, dest in _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=True):
+    for source, dest in _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=True,
+                                             named_refs=named_refs, own_names=_own_names()):
         if not _can_relink_imported_pair(source, dest, txn_by_id, account_ids):
             continue
         removed += _remove_generated_counterparts(actual.session, source, dest, txn_by_id)
@@ -1604,9 +1664,17 @@ def _sync_account(account, state):
         log.error(msg)
         return False, 0, msg
 
+    # Only the bank references are kept, never the names: the transfer matcher
+    # needs to know which transactions named someone, and the name is already
+    # in Actual as the imported payee.
+    own_names = _own_names()
+    named_refs = set(acct_state.get("named_refs", []))
+    named_refs.update(ref for t in raw if (ref := _get_entry_ref(t)) and _names_someone_else(t, own_names))
+
     acct_state["last_sync_date"]  = datetime.date.today().isoformat()
     acct_state["pending_map"]     = pending_map
     acct_state["imported_refs"]   = list(imported_refs)
+    acct_state["named_refs"]      = sorted(named_refs)
     state["accounts"][account_id] = acct_state
     return True, added + updated, "OK"
 
@@ -1738,10 +1806,16 @@ def run(only_account_id=None):
     # (i.e. Actual is reachable). A single failing or timed-out account must
     # never disable internal-transfer linking for all the healthy accounts.
     if successes:
+        named_refs = {
+            ref
+            for acct_state in state.get("accounts", {}).values()
+            for ref in acct_state.get("named_refs", [])
+        }
+
         def link_internal_transfers():
             with _actual_client("Internal transfers") as actual:
                 with _actual_phase("Internal transfers", "scan and link transfers"):
-                    linked = _auto_link_internal_transfers(actual, all_accounts)
+                    linked = _auto_link_internal_transfers(actual, all_accounts, named_refs)
                 if linked:
                     with _actual_phase("Internal transfers", "commit transfer links"):
                         actual.commit()
