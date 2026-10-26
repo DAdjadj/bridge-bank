@@ -110,6 +110,7 @@ async function sendTestEmail() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         notify_email: document.getElementById('notify_email').value,
+        notify_on: document.getElementById('notify_on').value,
         smtp_user: document.getElementById('smtp_user').value,
         smtp_password: document.getElementById('smtp_password').value,
         smtp_from: document.getElementById('smtp_from').value,

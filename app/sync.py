@@ -258,7 +258,7 @@ def _get_session(account):
         days_left = (expiry - datetime.datetime.now(datetime.timezone.utc)).days
         if days_left < 7:
             log.warning("Session for %s expires in %d days.", account.get("bank_name", "unknown"), days_left)
-            email_notify.send_session_expiry_warning(days_left)
+            email_notify.send_session_expiry_warning(days_left, account.get("bank_name"))
     return sid, uid
 
 def _fetch_transactions(account_uid, date_from):

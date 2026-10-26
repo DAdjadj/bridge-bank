@@ -561,7 +561,7 @@ def test_email():
         config.set("SMTP_AUTH", (data.get("smtp_auth") or "true").strip())
     try:
         from .. import email_notify
-        email_notify.send("Bridge Bank: test email", "This is a test email from Bridge Bank. If you're reading this, your email notifications are working correctly.", raise_on_error=True)
+        email_notify.send_test(data.get("notify_on"))
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
