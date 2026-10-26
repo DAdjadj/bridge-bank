@@ -15,7 +15,7 @@
   <div class="card-sub">Step 1 of 5 — enter your license key to get started</div>
   {% if error %}
     {% if 'expired' in error|lower %}
-      <div class="alert alert-error">Your free trial has expired. <a href="https://buy.stripe.com/aFabIU2ce8ntbuDeYVcMM03" target="_blank" style="color:inherit;font-weight:600;">Purchase a licence to continue &rarr;</a></div>
+      <div class="alert alert-error">Your free trial has expired. <a href="https://buy.stripe.com/aFabIU2ce8ntbuDeYVcMM03" target="_blank" style="color:inherit;font-weight:600;">Purchase a license to continue &rarr;</a></div>
     {% else %}
       <div class="alert alert-error">{{ error }}</div>
     {% endif %}
@@ -23,8 +23,8 @@
   {% if limit_reached %}
     <div class="card" style="border-color:#8a5a2b;">
       <div class="card-title" style="font-size:15px;">All activations are in use</div>
-      <div class="card-sub">This licence is still registered to earlier installations of Bridge Bank. That happens after a reinstall, a wiped data folder (for example <code>docker compose down -v</code>) or a move to a new server. If those installations are gone, release them and activate here. Their bank connections will need to be connected again.</div>
-      <form method="POST" onsubmit="return confirm('Release every other installation of this licence and activate here? Any other Bridge Bank installation still running will stop syncing.');">
+      <div class="card-sub">This license is still registered to earlier installations of Bridge Bank. That happens after a reinstall, a wiped data folder (for example <code>docker compose down -v</code>) or a move to a new server. If those installations are gone, release them and activate here. Their bank connections will need to be connected again.</div>
+      <form method="POST" onsubmit="return confirm('Release every other installation of this license and activate here? Any other Bridge Bank installation still running will stop syncing.');">
         <input type="hidden" name="license_key" value="{{ license_key }}">
         <input type="hidden" name="replace_others" value="1">
         <button type="submit" class="btn">Release previous installations and activate here</button>

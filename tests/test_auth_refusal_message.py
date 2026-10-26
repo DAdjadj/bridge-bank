@@ -63,7 +63,7 @@ class MarkCancelledTest(unittest.TestCase):
     def test_browser_reason_replaces_the_relay_generic_message(self):
         # The relay poller usually lands first and can only say "cancelled".
         _reset_flow(status="done", outcome="cancelled",
-                    message="Bank connection was cancelled at the bank.")
+                    message="Bank connection was canceled at the bank.")
         server._mark_auth_cancelled("ASPSP_ERROR", "Invalid status value")
         self.assertIn("Invalid status value", appdb.get_setting("auth_flow_message"))
 

@@ -27,7 +27,7 @@ Bridge Bank connects to your EU bank via open banking and imports your transacti
 - Docker and Docker Compose (runs on x86, Raspberry Pi, and other ARM devices)
 - A free [Enable Banking](https://enablebanking.com/) account
 - A self-hosted [Actual Budget](https://actualbudget.org/) instance
-- A Bridge Bank licence key — [buy one at bridgebank.app](https://bridgebank.app)
+- A Bridge Bank license key — [buy one at bridgebank.app](https://bridgebank.app)
 
 ---
 
@@ -36,7 +36,7 @@ Bridge Bank connects to your EU bank via open banking and imports your transacti
 > **New to self-hosting?** Follow the step-by-step guide at [bridgebank.app/getting-started](https://bridgebank.app/getting-started.html) — it walks you through everything from Enable Banking setup to running your first sync.
 
 
-### 1. Get your licence key
+### 1. Get your license key
 
 Purchase at [bridgebank.app](https://bridgebank.app). Your key is delivered to your email instantly.
 
@@ -61,7 +61,7 @@ Enable Banking is the regulated open banking provider that connects Bridge Bank 
 
 > **A consent of only 1 day here is normal.** This step is Enable Banking's own consent, used only to activate your application. The connection that actually syncs is made later inside Bridge Bank, which asks your bank for up to 180 days; its expiry date shows next to each account on the Bank page.
 
-> **The mode is permanent.** Enable Banking asks for Sandbox or Production at the top of the registration form, and applications cannot be moved between the two afterwards. A Sandbox application only returns simulated test data, so it will never connect to your real bank. If you already registered one in Sandbox, register a second application in Production and use that one.
+> **The mode is permanent.** Enable Banking asks for Sandbox or Production at the top of the registration form, and applications cannot be moved between the two afterward. A Sandbox application only returns simulated test data, so it will never connect to your real bank. If you already registered one in Sandbox, register a second application in Production and use that one.
 
 ### 3. Install Bridge Bank
 
@@ -111,7 +111,7 @@ The browser-based wizard walks you through five steps:
 
 You can connect up to 2 bank accounts by default. Each bank syncs to a different Actual Budget account (e.g. Revolut → "Revolut", N26 → "N26"). To add a second bank, go to the **Bank** tab and search for another bank.
 
-If your bank returns several accounts in one authorisation, select all the ones you want on the account screen and name an Actual Budget account for each. Connecting them one at a time costs one authorisation each, and some banks (Openbank NL among them) allow only one active connection, so authorising a second time silently revokes the first.
+If your bank returns several accounts in one authorization, select all the ones you want on the account screen and name an Actual Budget account for each. Connecting them one at a time costs one authorization each, and some banks (Openbank NL among them) allow only one active connection, so authorizing a second time silently revokes the first.
 
 Once complete, Bridge Bank runs silently in the background and syncs your transactions every day at the time you chose.
 
@@ -138,7 +138,7 @@ Your inbox  ← alert emails
 
 On each sync run, Bridge Bank:
 
-1. Validates your licence key
+1. Validates your license key
 2. Fetches transactions since the last sync from Enable Banking
 3. Filters out any transaction IDs already imported
 4. Writes new transactions to Actual Budget
@@ -157,9 +157,9 @@ Each connected bank has two toggles on its card on the Banks page:
 
 ## Session renewal (every ~180 days)
 
-Enable Banking requires you to re-authorise access roughly every 6 months. If you configured email notifications, you will receive a warning before expiry.
+Enable Banking requires you to re-authorize access roughly every 6 months. If you configured email notifications, you will receive a warning before expiry.
 
-To re-authorise, go to the **Bank** tab in the Bridge Bank web UI and click **Re-authorise bank**.
+To re-authorize, go to the **Bank** tab in the Bridge Bank web UI and click **Re-authorize bank**.
 
 If an account is left on an older connection that your newest connection to the same bank also covers, or the bank starts refusing that older connection, the **Bank** tab flags it and offers **Re-bind to the newest connection**, which moves it onto the connection that still works, with no new bank login. Accounts a bank keeps on separate connections by design, such as a Revolut personal and business profile, are left as they are.
 
@@ -174,7 +174,7 @@ Or run manually:
 docker compose pull && docker compose up -d
 ```
 
-**Running your own Watchtower too?** Current Watchtower versions delete duplicate instances on the same Docker host, which can remove `bridge-bank-watchtower` and with it in-app updates. The compose file gives Bridge Bank's Watchtower its own scope so both can coexist. Older installs get this added automatically after updating, with a backup of the original file, unless the file has been customised. To add it by hand, add to **both** services in `docker-compose.yml`:
+**Running your own Watchtower too?** Current Watchtower versions delete duplicate instances on the same Docker host, which can remove `bridge-bank-watchtower` and with it in-app updates. The compose file gives Bridge Bank's Watchtower its own scope so both can coexist. Older installs get this added automatically after updating, with a backup of the original file, unless the file has been customized. To add it by hand, add to **both** services in `docker-compose.yml`:
 ```yaml
     labels:
       - com.centurylinklabs.watchtower.scope=bridge-bank
@@ -189,7 +189,7 @@ then run `docker compose up -d`.
 
 ## License deactivation
 
-Each licence key supports up to 2 machine activations. To move Bridge Bank to a new machine, go to the **Status** page in the web UI and click **Deactivate license** before reinstalling.
+Each license key supports up to 2 machine activations. To move Bridge Bank to a new machine, go to the **Status** page in the web UI and click **Deactivate license** before reinstalling.
 
 ---
 

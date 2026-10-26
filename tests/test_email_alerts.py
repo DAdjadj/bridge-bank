@@ -33,8 +33,8 @@ def every_alert():
         "success-none": email_notify.build_success(0, ["ING (NL) → Joint checking: 0 transactions"]),
         "partial": email_notify.build_partial(SUCCESSES[:2], ERRORS),
         "failure-accounts": email_notify.build_failure("\n".join(f"  ✗ {e}" for e in ERRORS + [
-            "No active bank session for ING. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."])),
-        "failure-single": email_notify.build_failure("License invalid: This licence key has been deactivated."),
+            "No active bank session for ING. Open Bridge Bank and click 'Re-authorize bank' on the Bank page."])),
+        "failure-single": email_notify.build_failure("License invalid: This license key has been deactivated."),
         "trial-warning": email_notify.build_trial_expiry_warning(3),
         "trial-expired": email_notify.build_trial_expired(),
         "session": email_notify.build_session_expiry_warning(3, "ING"),
@@ -99,11 +99,11 @@ class AlertContentTest(unittest.TestCase):
         self.assertEqual(first["detail"], "Could not connect to Actual Budget at http://actual:5006. Error: timed out")
 
     def test_failure_with_account_errors(self):
-        subject, e = email_notify.build_failure("  ✗ " + ERRORS[0] + "\n  ✗ No active bank session for ING. Re-authorise.")
+        subject, e = email_notify.build_failure("  ✗ " + ERRORS[0] + "\n  ✗ No active bank session for ING. Re-authorize.")
         self.assertEqual(subject, "Bridge Bank: sync failed")
         self.assertIn({"label": "Accounts", "value": "0 of 2 synced", "bad": True}, e["facts"])
         unnamed = [a for a in e["accounts"] if not a["name"]]
-        self.assertEqual(unnamed[0]["detail"], "No active bank session for ING. Re-authorise.")
+        self.assertEqual(unnamed[0]["detail"], "No active bank session for ING. Re-authorize.")
         self.assertNotIn("✗", email_design.render_text(e))
 
     def test_failure_with_one_message(self):
@@ -112,10 +112,18 @@ class AlertContentTest(unittest.TestCase):
         self.assertEqual(e["facts"][0]["value"], "Unexpected error during scheduled sync: boom")
         self.assertFalse(e.get("accounts"))
 
+    def test_us_date_and_time(self):
+        self.assertEqual(email_notify._day_short(NOW), "Oct 26")
+        self.assertEqual(email_notify._day_long(NOW), "Monday, October 26")
+        self.assertEqual(email_notify._when(NOW), "Oct 26, 7:00 AM")
+        self.assertEqual(email_notify._when(NOW.replace(hour=0, minute=5)), "Oct 26, 12:05 AM")
+        self.assertEqual(email_notify._when(NOW.replace(hour=12)), "Oct 26, 12:00 PM")
+        self.assertEqual(email_notify._when(NOW.replace(hour=19, minute=30)), "Oct 26, 7:30 PM")
+
     def test_trial_and_session_dates(self):
         subject, e = email_notify.build_trial_expiry_warning(3)
         self.assertEqual(subject, "Bridge Bank: trial expires in 3 days")
-        self.assertIn({"label": "Ends", "value": "Thursday 29 October", "wide": True}, e["facts"])
+        self.assertIn({"label": "Ends", "value": "Thursday, October 29", "wide": True}, e["facts"])
         subject, e = email_notify.build_trial_expiry_warning(1)
         self.assertEqual(subject, "Bridge Bank: trial expires in 1 day")
         self.assertEqual(e["title"], "Your trial ends tomorrow")

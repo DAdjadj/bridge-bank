@@ -177,16 +177,16 @@ def _now() -> datetime.datetime:
         return datetime.datetime.now(datetime.timezone.utc)
 
 
-def _day_long(d) -> str:   # "Thursday 29 October"
-    return f"{_DAYS[d.weekday()]} {d.day} {_MONTHS[d.month - 1]}"
+def _day_long(d) -> str:   # "Thursday, October 29"
+    return f"{_DAYS[d.weekday()]}, {_MONTHS[d.month - 1]} {d.day}"
 
 
-def _day_short(d) -> str:  # "29 Oct"
-    return f"{d.day} {_MONTHS[d.month - 1][:3]}"
+def _day_short(d) -> str:  # "Oct 29"
+    return f"{_MONTHS[d.month - 1][:3]} {d.day}"
 
 
-def _when(dt) -> str:      # "26 Oct, 07:00"
-    return f"{_day_short(dt)}, {dt:%H:%M}"
+def _when(dt) -> str:      # "Oct 26, 7:00 AM"
+    return f"{_day_short(dt)}, {dt.hour % 12 or 12}:{dt:%M} {'AM' if dt.hour < 12 else 'PM'}"
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -262,7 +262,7 @@ def _account_rows(successes: list, errors: list):
 
 _TRY_STEPS = [
     "Open the Status page in Bridge Bank. Its sync log shows each step.",
-    "If a bank asks to be re-authorised, click Re-authorise on the Bank page.",
+    "If a bank asks to be re-authorized, click Re-authorize on the Bank page.",
     f"Still stuck? Click Download logs on the Status page and send them to [{SUPPORT}](mailto:{SUPPORT}).",
 ]
 
@@ -359,17 +359,17 @@ def build_trial_expiry_warning(days_left: int):
     title = "Your trial ends tomorrow" if days_left == 1 else f"Your trial ends in {days_left} days"
     return subject, {
         "subject": subject,
-        "preheader": "A licence keeps syncing running: one payment, no subscription.",
+        "preheader": "A license keeps syncing running: one payment, no subscription.",
         "chip": f"Trial · ends {_day_short(ends)}",
         "title": title,
-        "intro": ["When it ends, syncing to Actual Budget pauses. A licence keeps it running: one payment, no subscription."],
+        "intro": ["When it ends, syncing to Actual Budget pauses. A license keeps it running: one payment, no subscription."],
         "facts": [
             {"label": "Ends", "value": _day_long(ends), "wide": True},
             {"label": "Then", "value": "Syncing pauses"},
             {"label": "Your setup", "value": "Saved"},
         ],
         "cta": {"label": "Buy Bridge Bank", "href": PRICING_URL,
-                "sub": "Buy with the email address you started the trial with, and your trial key becomes a full licence by itself. Nothing to re-enter."},
+                "sub": "Buy with the email address you started the trial with, and your trial key becomes a full license by itself. Nothing to re-enter."},
         "after": _buy_after(),
         "reason": _reason("account"),
     }
@@ -378,16 +378,16 @@ def build_trial_expiry_warning(days_left: int):
 def build_trial_expired():
     return "Bridge Bank: trial expired", {
         "subject": "Bridge Bank: trial expired",
-        "preheader": "Syncing is paused. Everything you set up is saved and starts again with a licence.",
+        "preheader": "Syncing is paused. Everything you set up is saved and starts again with a license.",
         "chip": "Trial ended",
         "title": "Your trial has ended",
-        "intro": ["Syncing to Actual Budget is paused. Your bank connections and every setting are still saved, so a licence picks up exactly where the trial stopped."],
+        "intro": ["Syncing to Actual Budget is paused. Your bank connections and every setting are still saved, so a license picks up exactly where the trial stopped."],
         "facts": [
             {"label": "Syncing", "value": "Paused", "bad": True},
             {"label": "Your setup", "value": "Saved"},
         ],
         "cta": {"label": "Buy Bridge Bank", "href": PRICING_URL,
-                "sub": "One payment, no subscription. Buy with the email address you started the trial with, and your trial key becomes a full licence by itself."},
+                "sub": "One payment, no subscription. Buy with the email address you started the trial with, and your trial key becomes a full license by itself."},
         "after": _buy_after(),
         "reason": _reason("account"),
     }
@@ -400,7 +400,7 @@ def build_session_expiry_warning(days_left: int, bank_name: str = None):
     subject = f"Bridge Bank: bank session expires {'today' if days_left <= 0 else 'in ' + _plural(days_left, 'day', 'days')}"
     return subject, {
         "subject": subject,
-        "preheader": "Re-authorise it on the Bank page. It takes about a minute.",
+        "preheader": "Re-authorize it on the Bank page. It takes about a minute.",
         "chip": f"Bank · expires {_day_short(ends)}",
         "title": f"Your {bank or 'bank'} connection expires {when}",
         "intro": ["Banks ask you to approve Bridge Bank's access again from time to time. It takes about a minute, and syncing carries on as before."],
@@ -412,7 +412,7 @@ def build_session_expiry_warning(days_left: int, bank_name: str = None):
         "steps_title": "Renew it in three steps",
         "steps": [
             f"Open Bridge Bank and go to the {_page_link('Bank page', '/bank')}.",
-            f"Click Re-authorise under {bank or 'the bank'}.",
+            f"Click Re-authorize under {bank or 'the bank'}.",
             "Sign in at your bank and approve access.",
         ],
         "cta": _open_button("Open the Bank page", "/bank"),

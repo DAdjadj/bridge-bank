@@ -422,7 +422,7 @@ class RevolutSeparateProfilesTest(_IsolatedDbTest):
         self.assertEqual(len(server._split_session_banks(_rows())), 1)
         _, resp = self._rebind()
         location = unquote(resp.headers["Location"])
-        self.assertIn("re-binding cannot repair it. Re-authorise it instead", location)
+        self.assertIn("re-binding cannot repair it. Re-authorize it instead", location)
         self.assertEqual(server._split_session_banks(_rows()), [])
 
 
@@ -493,6 +493,22 @@ class AuthRefusalRecognitionTest(unittest.TestCase):
         self.assertFalse(sync.is_auth_refusal(msg))
         self.assertFalse(sync.is_auth_refusal(sync._fetch_failure_message(
             "Openbank (NL) → Openbank", _http_error(429))))
+
+
+class SavedBritishMessagesTest(_IsolatedDbTest):
+    """Sync logs written before the US English change say "authorisation" and
+    "Re-authorise". The Bank page still reads them until the next sync."""
+
+    OLD = ("Openbank (NL) → Openbank: Your bank rejected this account's authorisation (error 401). "
+           "Open Bridge Bank and click 'Re-authorise bank' on the Bank page to reconnect it.")
+
+    def test_old_refusal_still_marks_the_account(self):
+        _add("Openbank")
+        appdb.log_sync("failure", message=self.OLD)
+        row = _rows()[0]
+        self.assertTrue(row["sync_failed"])
+        self.assertTrue(row["needs_reauth"])
+        self.assertTrue(row["auth_refused"])
 
 
 class RebindRouteTest(_IsolatedDbTest):

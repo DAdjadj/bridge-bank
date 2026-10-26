@@ -248,7 +248,7 @@ def _get_session(account):
     exp = account.get("session_expiry")
     if not sid or not uid:
         raise RuntimeError(
-            "No active bank session for %s. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."
+            "No active bank session for %s. Open Bridge Bank and click 'Re-authorize bank' on the Bank page."
             % account.get("bank_name", "unknown")
         )
     if exp:
@@ -406,7 +406,9 @@ def _looks_like_auth_failure(text):
 # Every sync-log message for an authorisation the bank refused carries one of
 # these. That refusal is what shows an account left on an older session has
 # actually stopped working, rather than just being older.
-AUTH_REFUSAL_PHRASES = ("rejected this account's authorisation", "bank session has expired")
+# The British spelling still matches messages saved by versions before the US English change.
+AUTH_REFUSAL_PHRASES = ("rejected this account's authorization", "rejected this account's authorisation",
+                        "bank session has expired")
 
 def is_auth_refusal(message):
     low = (message or "").lower()
@@ -498,7 +500,7 @@ def _fetch_failure_message(bank_label, exc, account=None):
     if status == 429:
         return f"{bank_label}: Your bank is rate-limiting requests. Bridge Bank will retry on the next scheduled sync."
     if status in (401, 403):
-        return f"{bank_label}: Your bank session has expired. Open Bridge Bank and click 'Re-authorise bank' on the Bank page."
+        return f"{bank_label}: Your bank session has expired. Open Bridge Bank and click 'Re-authorize bank' on the Bank page."
     if isinstance(exc, requests.HTTPError):
         detail = _eb_error_snippet(response)
         if not _eb_nested_detail(response):
@@ -507,13 +509,13 @@ def _fetch_failure_message(bank_label, exc, account=None):
             # The bank is refusing this account's authorisation, which a fresh
             # one does clear. Re-binding clears it without spending an SCA.
             if _bank_has_newer_session(account):
-                return (f"{bank_label}: Your bank rejected this account's authorisation (error {status}{detail}). "
-                        "Another account at this bank is on a newer authorisation and this one was left "
+                return (f"{bank_label}: Your bank rejected this account's authorization (error {status}{detail}). "
+                        "Another account at this bank is on a newer authorization and this one was left "
                         "behind, which is what happens at banks that allow only one active consent. Open "
                         "the Bank page and use 'Re-bind to the newest connection' to repair it without a "
                         "new login.")
-            return (f"{bank_label}: Your bank rejected this account's authorisation (error {status}{detail}). "
-                    "Open Bridge Bank and click 'Re-authorise bank' on the Bank page to reconnect it.")
+            return (f"{bank_label}: Your bank rejected this account's authorization (error {status}{detail}). "
+                    "Open Bridge Bank and click 'Re-authorize bank' on the Bank page to reconnect it.")
         # Deliberately does not offer re-authorisation. A refusal that is not
         # 401/403 and does not name an authentication failure is the bank
         # rejecting the request itself, so a fresh SCA cannot clear it, and
@@ -1748,7 +1750,7 @@ def run(only_account_id=None):
         if seat_result.get("network"):
             log.warning("Bank seat verification skipped: %s", seat_result.get("error"))
         else:
-            msg = seat_result.get("error") or "Bank account limit reached for this licence."
+            msg = seat_result.get("error") or "Bank account limit reached for this license."
             log.error(msg)
             db.set_setting("license_bank_limit_error", msg)
             db.log_sync("failure", message=msg)

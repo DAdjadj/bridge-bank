@@ -173,7 +173,7 @@ def _ensure_global_bank_capacity(current_accounts, new_seats=1):
     if not result.get("ok"):
         if result.get("network"):
             return "Could not confirm your global bank slot availability right now. Please try again in a moment."
-        return result.get("error") or "Bank account limit reached for this licence."
+        return result.get("error") or "Bank account limit reached for this license."
     used = int(result.get("used") or 0)
     limit = int(result.get("limit") or _get_bank_account_limit())
     if used + new_seats > limit:
@@ -187,7 +187,7 @@ def _claim_bank_seat(account):
         return None
     if result.get("network"):
         return "Could not confirm your global bank slot availability right now. Please try again in a moment."
-    return result.get("error") or "Bank account limit reached for this licence."
+    return result.get("error") or "Bank account limit reached for this license."
 
 def _split_session_banks(accounts):
     """Banks where an account on an older session could move onto the newest one.
@@ -253,7 +253,7 @@ def _mark_sync_failures(accounts):
         label = sync.bank_label(a)
         matched = next((m for m in failure_messages if m.startswith(label + ":") or m == label), None)
         a["sync_failed"] = bool(matched)
-        a["needs_reauth"] = bool(matched) and "re-authorise" in matched.lower()
+        a["needs_reauth"] = bool(matched) and ("re-authorize" in matched.lower() or "re-authorise" in matched.lower())
         a["auth_refused"] = bool(matched) and sync.is_auth_refusal(matched)
     return accounts
 
@@ -1074,7 +1074,7 @@ def reauthorise():
     # the auth succeeds at the bank and only fails afterwards, invisibly.
     lic = licence.validate()
     if not lic.get("valid"):
-        return redirect(url_for("bank") + "?error=" + (lic.get("error") or "Your license could not be validated. Renew it to re-authorise your bank."))
+        return redirect(url_for("bank") + "?error=" + (lic.get("error") or "Your license could not be validated. Renew it to re-authorize your bank."))
     try:
         db.set_setting("pending_reauth_account_id", account_id)
         db.set_setting("pending_bank_name", bank_name)
@@ -1092,7 +1092,7 @@ def reauthorise():
         relay.launch(_relay_complete)
     except Exception as e:
         logger.error("Failed to start reauth: %s", e)
-        return redirect(url_for("bank") + f"?error=Could not start re-authorisation: {e}")
+        return redirect(url_for("bank") + f"?error=Could not start re-authorization: {e}")
 
     all_accounts = db.get_all_bank_accounts()
     bank_seat_error, bank_seat_result = _get_bank_seat_error(all_accounts)
@@ -1144,10 +1144,10 @@ def _nothing_to_rebind_message(bank_name, candidates):
     cover = "does not cover" if certain else "does not seem to cover"
     if refused:
         return ("Nothing to re-bind at %s: your newest connection there %s %s, so re-binding cannot "
-                "repair %s. Re-authorise %s instead, and if the bank asks which accounts to share, "
+                "repair %s. Re-authorize %s instead, and if the bank asks which accounts to share, "
                 "include every account you sync from it." % (bank_name, cover, names, it, it))
     return ("Nothing to re-bind at %s: %s %s on %s that your newest one %s, so there is nothing to "
-            "move. That is normal at banks that authorise each account or profile on its own, such "
+            "move. That is normal at banks that authorize each account or profile on its own, such "
             "as a personal and a business profile."
             % (bank_name, names, "is" if one else "are",
                "a separate connection" if one else "separate connections", cover))
@@ -1182,12 +1182,12 @@ def rebind():
         logger.error("Could not read session %s for re-bind: %s", newest["session_id"], e)
         return redirect(url_for("bank") + "?error=" + quote(
             "Could not read the newest connection for this bank (%s). If the bank has revoked "
-            "that one too, re-authorise instead." % e))
+            "that one too, re-authorize instead." % e))
     accounts = session.get("accounts") or []
     if not accounts:
         return redirect(url_for("bank") + "?error=" + quote(
             "The newest connection for this bank does not list any accounts, so there is "
-            "nothing to re-bind to. Re-authorise instead."))
+            "nothing to re-bind to. Re-authorize instead."))
     _remember_session_accounts(newest["session_id"], accounts)
     candidates = _rebind_candidates(bank_name, bank_country, newest["session_id"], accounts,
                                     look_up_older=True)
@@ -1233,7 +1233,7 @@ def add_from_connection():
         logger.error("Could not read session %s to add an account: %s", newest["session_id"], e)
         return redirect(url_for("bank") + "?error=" + quote(
             "Could not read your existing connection at this bank (%s). Connect the bank "
-            "again to authorise a new one." % e))
+            "again to authorize a new one." % e))
     _remember_session_accounts(newest["session_id"], session.get("accounts") or [])
     taken = {r.get("account_uid") for r in rows}
     unused = [a for a in (session.get("accounts") or [])
@@ -1241,7 +1241,7 @@ def add_from_connection():
     if not unused:
         return redirect(url_for("bank") + "?error=" + quote(
             "Every account covered by your existing %s connection is already connected. "
-            "Connecting a different one needs a new authorisation, which at a bank that "
+            "Connecting a different one needs a new authorization, which at a bank that "
             "allows only one active connection would revoke this one." % bank_name))
     capacity_error = _ensure_global_bank_capacity(db.get_all_bank_accounts(), new_seats=1)
     if capacity_error:
@@ -1359,11 +1359,11 @@ def _save_bank_accounts(session_id, selections, valid_until):
     threading.Thread(target=sync.run, daemon=True).start()
 
 NO_ACCOUNTS_ERROR = ("Your bank did not return any accounts. This may happen if you declined "
-                     "account access during authorisation, or if the selected account type is not "
+                     "account access during authorization, or if the selected account type is not "
                      "supported by your bank through open banking. Please try again and make sure "
                      "to approve access to at least one account.")
 
-GENERIC_CANCEL_MESSAGE = "Bank connection was cancelled or denied."
+GENERIC_CANCEL_MESSAGE = "Bank connection was canceled or denied."
 
 # OAuth codes that genuinely mean "the person said no", as opposed to the bank
 # refusing the request on its own account.
@@ -1703,7 +1703,7 @@ def pick_account_post():
             # Only ever write a uid this session actually returned, and never
             # point two stored accounts at the same one.
             if uid not in valid_uids:
-                return redirect(url_for("pick_account") + "?error=That account is no longer part of this authorisation. Please try again.")
+                return redirect(url_for("pick_account") + "?error=That account is no longer part of this authorization. Please try again.")
             if uid in used:
                 return redirect(url_for("pick_account") + "?error=Each bank account can only be linked to one Bridge Bank account. Please review your selection.")
             used.add(uid)
@@ -1741,7 +1741,7 @@ def pick_account_post():
         for uid in request.form.getlist("account_uid"):
             uid = (uid or "").strip()
             if uid not in valid_uids:
-                return redirect(url_for("pick_account") + "?error=That account is not part of this authorisation. Please try again.")
+                return redirect(url_for("pick_account") + "?error=That account is not part of this authorization. Please try again.")
             name = (request.form.get("actual_%s" % uid) or "").strip()
             if not name:
                 return redirect(url_for("pick_account") + "?error=Please name the Actual Budget account for every bank account you selected.")

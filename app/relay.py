@@ -204,7 +204,7 @@ def _poll_loop(state_id: str, complete_cb):
             if status == "cancelled":
                 if db.compare_and_swap_setting("auth_flow_status", "pending", "in_progress"):
                     db.set_setting("auth_flow_outcome", "cancelled")
-                    db.set_setting("auth_flow_message", "Bank connection was cancelled at the bank.")
+                    db.set_setting("auth_flow_message", "Bank connection was canceled at the bank.")
                     db.set_setting("auth_flow_status", "done")
                 return
             if status in ("expired", "disabled"):

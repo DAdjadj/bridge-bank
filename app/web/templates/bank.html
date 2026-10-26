@@ -25,7 +25,7 @@
   <div class="card" style="border-color:#8a5a2b;">
     <div class="card-title" style="font-size:15px;">Bank slots held by a previous installation</div>
     <div class="card-sub">{{ other_machine_seats }} of your bank slot(s) belong to another installation of Bridge Bank (for example one from before a reinstall, an update run from a different folder, or a move to a new server). If that installation is no longer in use, release its slots below and connect your bank again. Only skip this if you are intentionally running Bridge Bank on a second machine.</div>
-    <form method="POST" action="/bank/release-other-machines" onsubmit="return confirm('Release all bank slots held by other installations of this licence? If another Bridge Bank installation is still running somewhere, it will stop syncing.');">
+    <form method="POST" action="/bank/release-other-machines" onsubmit="return confirm('Release all bank slots held by other installations of this license? If another Bridge Bank installation is still running somewhere, it will stop syncing.');">
       <button type="submit" class="btn">Release slots from previous installation</button>
     </form>
   </div>
@@ -66,7 +66,7 @@
 {% elif pem_ready and not auth_url %}
   <div class="card">
     <div class="card-title">Connect your bank</div>
-    <div class="card-sub">Step 4 of 5 — search for your bank and authorise read-only access.</div>
+    <div class="card-sub">Step 4 of 5 — search for your bank and authorize read-only access.</div>
 
     <div style="margin-bottom:1rem;padding:10px 14px;background:rgba(16,185,129,0.07);border:1px solid rgba(16,185,129,0.2);border-radius:8px;font-size:13px;color:#6ee7b7;display:flex;align-items:center;gap:8px;">
       <span>&#10003;</span> Private key loaded. <a href="/bank/reset-pem" style="color:#94a3b8;font-size:12px;margin-left:auto;">Replace</a>
@@ -96,7 +96,7 @@
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div>
           {% if a.needs_reauth %}
-          <div class="connected-pill" style="background:rgba(239,68,68,0.12);color:#f87171;border-color:rgba(239,68,68,0.4);">Needs re-authorisation</div>
+          <div class="connected-pill" style="background:rgba(239,68,68,0.12);color:#f87171;border-color:rgba(239,68,68,0.4);">Needs re-authorization</div>
           {% elif a.sync_failed %}
           <div class="connected-pill" style="background:rgba(245,158,11,0.12);color:#fbbf24;border-color:rgba(245,158,11,0.4);">Last sync failed</div>
           {% else %}
@@ -145,7 +145,7 @@
           <input type="hidden" name="account_id" value="{{ a.id }}">
           <input type="hidden" name="bank_name" value="{{ a.bank_name }}">
           <input type="hidden" name="bank_country" value="{{ a.bank_country }}">
-          <button type="submit" style="background:none;border:none;cursor:pointer;font-size:11px;text-decoration:underline;{% if a.needs_reauth %}color:#f87171;font-weight:600;{% else %}color:#94a3b8;{% endif %}">Re-authorise{% if a.needs_reauth %} now{% endif %}</button>
+          <button type="submit" style="background:none;border:none;cursor:pointer;font-size:11px;text-decoration:underline;{% if a.needs_reauth %}color:#f87171;font-weight:600;{% else %}color:#94a3b8;{% endif %}">Re-authorize{% if a.needs_reauth %} now{% endif %}</button>
         </form>
       </div>
       {% endif %}
@@ -222,7 +222,7 @@
       <div class="field-hint">2,500+ banks across 29 European countries.</div>
       <div id="existing-connection" style="display:none;margin-top:0.75rem;padding:12px 14px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.35);border-radius:8px;">
         <div style="font-size:12px;color:#94a3b8;line-height:1.5;">
-          You already have <span id="existing-bank-label" style="color:#fbbf24;font-weight:600;"></span> connected. Authorising it again creates a second connection, and banks that allow only one active connection revoke the first, which stops your existing accounts syncing. If the account you want is covered by the connection you already have, add it from there instead.
+          You already have <span id="existing-bank-label" style="color:#fbbf24;font-weight:600;"></span> connected. Authorizing it again creates a second connection, and banks that allow only one active connection revoke the first, which stops your existing accounts syncing. If the account you want is covered by the connection you already have, add it from there instead.
         </div>
         <button type="submit" formaction="/bank/add-from-connection" formnovalidate class="btn btn-ghost" style="margin-top:10px;font-size:11px;padding:6px 10px;">Add an account from the existing connection</button>
       </div>
@@ -267,7 +267,7 @@
     <div class="card-title">Connect your bank</div>
     <div class="card-sub">Approve access in your bank's login page. This page updates on its own.</div>
     <div style="text-align:center;padding:0.5rem 0 1rem;">
-      <div style="font-size:15px;font-weight:600;margin-bottom:0.5rem;" id="auth-progress-title">Authorise your bank</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:0.5rem;" id="auth-progress-title">Authorize your bank</div>
       <div style="font-size:13px;color:#94a3b8;margin-bottom:1.5rem;line-height:1.6;" id="auth-progress-text">Click the button below to open your bank login in a new tab.<br>Keep this tab open. It will show when the connection is done.</div>
     </div>
     <a href="{{ auth_url }}" target="_blank" rel="noopener" class="btn btn-primary" id="auth-open-link">Open bank login &rarr;</a>
@@ -325,7 +325,7 @@
     if (form.dataset.balance === '1') {
       return confirm('Sync the balance into "' + name + '"? Balance-only syncing replaces every transaction in that account with a single balance entry, so only choose an account kept for this purpose.');
     }
-    return confirm('Sync into "' + name + '" from the next sync? Transactions already imported stay in the current account. To import them into "' + name + '" as well, use Reset sync afterwards.');
+    return confirm('Sync into "' + name + '" from the next sync? Transactions already imported stay in the current account. To import them into "' + name + '" as well, use Reset sync afterward.');
   }
 
   function syncAccount(id, btn) {
@@ -374,7 +374,7 @@
           link.style.display = 'none';
           setTimeout(() => { window.location.href = '/status'; }, 1500);
         } else if (p.outcome === 'cancelled') {
-          window.location.href = '/bank?error=' + encodeURIComponent(p.message || 'Bank connection was cancelled. Please try again.');
+          window.location.href = '/bank?error=' + encodeURIComponent(p.message || 'Bank connection was canceled. Please try again.');
         } else {
           window.location.href = '/bank?error=' + encodeURIComponent(p.message || 'Bank connection failed. Please try again.');
         }
