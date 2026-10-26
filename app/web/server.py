@@ -1380,7 +1380,7 @@ def _auth_refusal_message(error="", detail=""):
     if not reason or reason in USER_CANCEL_ERRORS:
         return GENERIC_CANCEL_MESSAGE
     return ("Your bank refused the connection (%s). That is a refusal at the bank rather than "
-            "a Bridge Bank error, so trying again straight away usually fails the same way. "
+            "a Bridge Bank error, so trying again right away usually fails the same way. "
             "Wait a while, check whether your bank lists Enable Banking under its third-party "
             "access settings, then try once more." % reason[:160])
 
