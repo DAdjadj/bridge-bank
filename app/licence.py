@@ -108,7 +108,7 @@ def activate(key, replace_others=False):
                             data.get("removed_activations"), data.get("removed_seats"))
             return {"valid": True, "error": None}
         elif resp.status_code == 409:
-            msg = data.get("error") or "Activation limit reached for this licence."
+            msg = data.get("error") or "Activation limit reached for this license."
             return {"valid": False, "error": msg, "limit_reached": bool(data.get("limit_reached"))}
         else:
             msg = data.get("error") or "Invalid license key."
@@ -224,7 +224,7 @@ def claim_bank_seat(account, key=None):
             }
         return {
             "ok": False,
-            "error": data.get("error") or "Could not reserve a bank slot for this licence.",
+            "error": data.get("error") or "Could not reserve a bank slot for this license.",
             "used": data.get("used"),
             "limit": data.get("limit"),
             "other_machine_seats": data.get("other_machine_seats", 0),
@@ -263,7 +263,7 @@ def sync_bank_seats(accounts, key=None):
             }
         return {
             "ok": False,
-            "error": data.get("error") or "Could not verify bank slots for this licence.",
+            "error": data.get("error") or "Could not verify bank slots for this license.",
             "used": data.get("used"),
             "limit": data.get("limit"),
             "other_machine_seats": data.get("other_machine_seats", 0),

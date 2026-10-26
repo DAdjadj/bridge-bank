@@ -31,12 +31,12 @@ class FetchFailureMessageTest(unittest.TestCase):
         for status in (401, 403):
             msg = _fetch_failure_message("ING (NL) → ING Prive", _http_error(status))
             self.assertIn("session has expired", msg)
-            self.assertIn("Re-authorise", msg)
+            self.assertIn("Re-authorize", msg)
 
     def test_429_does_not_ask_for_reauth(self):
         msg = _fetch_failure_message("ING (NL) → ING Prive", _http_error(429))
         self.assertIn("rate-limiting", msg)
-        self.assertNotIn("Re-authorise", msg)
+        self.assertNotIn("Re-authorize", msg)
 
     def test_other_http_errors_surface_status_and_code(self):
         msg = _fetch_failure_message(
@@ -54,8 +54,8 @@ class FetchFailureMessageTest(unittest.TestCase):
             _http_error(400, body={"code": 400, "message": "Error interacting with ASPSP",
                                    "detail": {"message": "Invalid status value"},
                                    "error": "ASPSP_ERROR"}))
-        self.assertNotIn("Re-authorise", msg)
-        self.assertNotIn("re-authorise", msg.lower())
+        self.assertNotIn("Re-authorize", msg)
+        self.assertNotIn("re-authorize", msg.lower())
         self.assertIn("retry on the next scheduled sync", msg)
 
     def test_nested_bank_detail_reaches_the_message(self):
@@ -72,7 +72,7 @@ class FetchFailureMessageTest(unittest.TestCase):
         msg = _fetch_failure_message("ING (NL) → ING Prive", requests.ConnectionError("boom"))
         self.assertIn("Could not reach your bank's API", msg)
         self.assertIn("retry on the next scheduled sync", msg)
-        self.assertNotIn("Re-authorise", msg)
+        self.assertNotIn("Re-authorize", msg)
 
     def test_snippet_key_cascade_and_truncation(self):
         resp = MagicMock()
@@ -127,7 +127,7 @@ class RevokedConsentTest(unittest.TestCase):
     def test_authentication_failure_asks_for_a_reconnection(self):
         msg, _ = self._message(account={"id": 1, "account_uid": "uid-a"},
                                probe=self._probe_response(self.OPENBANK_DETAILS))
-        self.assertIn("Re-authorise", msg)
+        self.assertIn("Re-authorize", msg)
         self.assertNotIn("will not clear it", msg)
 
     def test_a_newer_session_at_the_bank_points_at_rebinding(self):
@@ -137,7 +137,7 @@ class RevokedConsentTest(unittest.TestCase):
                                newer_session=True,
                                probe=self._probe_response(self.OPENBANK_DETAILS))
         self.assertIn("Re-bind to the newest connection", msg)
-        self.assertNotIn("Re-authorise", msg)
+        self.assertNotIn("Re-authorize", msg)
 
     def test_probe_is_skipped_when_the_bank_already_named_the_fault(self):
         with patch("app.sync.requests.get") as get, \
@@ -150,7 +150,7 @@ class RevokedConsentTest(unittest.TestCase):
                 account={"id": 1, "account_uid": "uid-a"})
         get.assert_not_called()
         self.assertIn("Invalid status value", msg)
-        self.assertNotIn("Re-authorise", msg)
+        self.assertNotIn("Re-authorize", msg)
 
     def test_a_failing_probe_leaves_the_original_message_intact(self):
         with patch("app.sync.requests.get", side_effect=requests.ConnectionError("boom")), \
@@ -180,7 +180,7 @@ class RevokedConsentTest(unittest.TestCase):
                 _http_error(422, body={"message": "Session status is not authorized"}))
         get.assert_not_called()
         self.assertIn("send your logs", msg)
-        self.assertNotIn("Re-authorise", msg)
+        self.assertNotIn("Re-authorize", msg)
 
     def test_nested_detail_reader_handles_every_shape(self):
         r = MagicMock()

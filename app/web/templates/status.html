@@ -12,7 +12,7 @@
 {% block content %}
 
 {% if is_trial and trial_expires_at %}
-  <div class="alert alert-warn">You are on a free trial — expires {{ trial_expires_at }}. <a href="https://buy.stripe.com/aFabIU2ce8ntbuDeYVcMM03" target="_blank" style="color:inherit;font-weight:600;">Purchase a licence &rarr;</a></div>
+  <div class="alert alert-warn">You are on a free trial — expires {{ trial_expires_at }}. <a href="https://buy.stripe.com/aFabIU2ce8ntbuDeYVcMM03" target="_blank" style="color:inherit;font-weight:600;">Purchase a license &rarr;</a></div>
 {% endif %}
 
 {% if license_sync_failed %}
@@ -35,7 +35,7 @@
 
 {% if last_run_failures %}
   <div class="alert alert-error">
-    <strong>Some accounts could not sync on the last run.</strong> They will keep failing until fixed (a bank often just needs re-authorising):
+    <strong>Some accounts could not sync on the last run.</strong> They will keep failing until fixed (a bank often just needs re-authorizing):
     <ul style="margin:8px 0 6px;padding-left:18px;">
       {% for m in last_run_failures %}<li style="margin-bottom:2px;">{{ m }}</li>{% endfor %}
     </ul>
