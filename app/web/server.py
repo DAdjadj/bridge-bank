@@ -2039,14 +2039,36 @@ def deactivate_license():
 
 _sync_running = False
 
+
+def _holder_for_sync():
+    """The account holder's details for a sync a person asked for.
+
+    Bridge Budget's Sync now sends the person's IP address and browser in the
+    body. Bridge Bank's own Sync now buttons come straight from a browser, so
+    their request carries both. Anything else (a script, an older Bridge
+    Budget calling from its server) syncs unattended as before.
+    """
+    data = request.get_json(silent=True) or {}
+    ip = data.get("psu_ip") if isinstance(data, dict) else None
+    ua = data.get("psu_user_agent") if isinstance(data, dict) else None
+    if not ip:
+        browser = request.headers.get("User-Agent") or ""
+        if browser.startswith("Mozilla/"):
+            forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            ip = forwarded or request.remote_addr or ""
+            ua = browser
+    return sync.holder_headers(str(ip or ""), str(ua or ""))
+
+
 @app.route("/sync/now", methods=["POST"])
 def sync_now():
     global _sync_running
+    holder = _holder_for_sync()
     _sync_running = True
     def _run():
         global _sync_running
         try:
-            sync.run()
+            sync.run(holder=holder)
         finally:
             _sync_running = False
     threading.Thread(target=_run, daemon=True).start()
@@ -2064,11 +2086,12 @@ def sync_account():
         return jsonify({"ok": False, "error": "Account not found."}), 404
     if _sync_running:
         return jsonify({"ok": False, "error": "A sync is already running. Please wait for it to finish."}), 409
+    holder = _holder_for_sync()
     _sync_running = True
     def _run():
         global _sync_running
         try:
-            sync.run(only_account_id=aid)
+            sync.run(only_account_id=aid, holder=holder)
         finally:
             _sync_running = False
     threading.Thread(target=_run, daemon=True).start()

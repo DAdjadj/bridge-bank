@@ -1,9 +1,34 @@
-import contextlib, os, json, sys, time, logging, datetime, decimal, requests
+import contextlib, os, json, sys, threading, time, logging, datetime, decimal, requests
 
 from . import config, db, email_notify, enablebanking, licence
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
+
+# Details of the person who pressed Sync now, sent to the bank with each
+# transactions request. PSD2 lets banks refuse more than four requests a day
+# per account when the account holder isn't there; a request carrying the
+# holder's IP address and browser counts as the holder asking, so a manual
+# sync doesn't use up what the scheduled ones need. Scheduled syncs send none.
+_holder = threading.local()
+
+
+def holder_headers(ip, user_agent):
+    """Enable Banking's PSU headers, or {} when either detail is missing."""
+    import ipaddress
+    ip = (ip or "").strip()
+    user_agent = (user_agent or "").strip()
+    if not ip or not user_agent:
+        return {}
+    try:
+        ip = str(ipaddress.ip_address(ip))
+    except ValueError:
+        return {}
+    return {"Psu-Ip-Address": ip, "Psu-User-Agent": user_agent[:255]}
+
+
+def _holder_headers():
+    return dict(getattr(_holder, "headers", None) or {})
 
 STATE_FILE = "/data/state.json"
 EB_API     = "https://api.enablebanking.com"
@@ -334,6 +359,24 @@ def _get_session(account):
     return sid, uid
 
 def _fetch_transactions(account_uid, date_from):
+    """Fetch transactions, as the account holder when a person asked for this
+    sync. If the bank refuses a request marked that way, it is asked again as
+    a normal (unattended) one, so marking it can never make a sync fail."""
+    extra = _holder_headers()
+    if extra:
+        try:
+            return _fetch_with_fallbacks(account_uid, date_from, extra)
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            # Rate limits and bank outages were already retried; asking again
+            # would only add requests.
+            if status == 429 or status >= 500:
+                raise
+            log.warning("Bank refused the sync sent as the account holder (%s); "
+                        "retrying as a normal sync", status)
+    return _fetch_with_fallbacks(account_uid, date_from, {})
+
+def _fetch_with_fallbacks(account_uid, date_from, extra_headers):
     """Fetch transactions, tolerating banks' unattended-history limits.
 
     Outside the short window right after SCA, many banks (ING NL among them)
@@ -345,23 +388,23 @@ def _fetch_transactions(account_uid, date_from):
     get a plain request, and a WRONG_TRANSACTIONS_PERIOD anyway is retried
     with the window clamped to 89 days."""
     try:
-        return _fetch_transactions_once(account_uid, date_from, use_strategy=True)
+        return _fetch_transactions_once(account_uid, date_from, use_strategy=True, extra_headers=extra_headers)
     except requests.HTTPError as e:
         body = (getattr(e.response, "text", "") or "").upper() if e.response is not None else ""
         status = e.response.status_code if e.response is not None else 0
         if status in (400, 422) and ("STRATEGY" in body or "WRONG_REQUEST_PARAMETERS" in body):
             log.warning("Bank rejected the transactions strategy hint; retrying without it")
-            return _fetch_transactions_once(account_uid, date_from, use_strategy=False)
+            return _fetch_transactions_once(account_uid, date_from, use_strategy=False, extra_headers=extra_headers)
         if "WRONG_TRANSACTIONS_PERIOD" in body:
             clamped = max(date_from, datetime.date.today() - datetime.timedelta(days=89))
             if clamped != date_from:
                 log.warning("Bank refused history from %s (unattended limit); retrying from %s",
                             date_from.isoformat(), clamped.isoformat())
-                return _fetch_transactions_once(account_uid, clamped, use_strategy=True)
+                return _fetch_transactions_once(account_uid, clamped, use_strategy=True, extra_headers=extra_headers)
         raise
 
-def _fetch_transactions_once(account_uid, date_from, use_strategy=True):
-    headers = _make_headers()
+def _fetch_transactions_once(account_uid, date_from, use_strategy=True, extra_headers=None):
+    headers = {**_make_headers(), **(extra_headers or {})}
     base_params = {"date_from": date_from.isoformat(), "date_to": datetime.date.today().isoformat()}
     if use_strategy:
         base_params["strategy"] = "longest"
@@ -1835,7 +1878,19 @@ def bank_label(account):
         return f"{account.get('bank_name', account.get('provider', 'Unknown'))} → {actual_name}"
     return f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) → {actual_name}"
 
-def run(only_account_id=None):
+def run(only_account_id=None, holder=None):
+    """Sync all bank accounts, or just one when only_account_id is given.
+
+    holder: PSU headers from holder_headers() when a person pressed Sync now.
+    """
+    _holder.headers = holder or {}
+    try:
+        return _run(only_account_id)
+    finally:
+        _holder.headers = {}
+
+
+def _run(only_account_id=None):
     """Sync all bank accounts, or just one when only_account_id is given.
 
     A per-account sync still runs the licence and seat checks and the
