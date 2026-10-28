@@ -29,8 +29,8 @@ def _ensure_tables(conn):
         )
     """)
     # Which bank accounts each Enable Banking session covers. Only the
-    # session-scoped uid and Enable Banking's identification_hash are kept: no
-    # IBANs or names.
+    # session-scoped uid and Enable Banking's identification_hash are kept
+    # here; a connected account's own IBAN lives on its bank_accounts row.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS session_accounts (
             session_id TEXT PRIMARY KEY,
@@ -69,6 +69,9 @@ def _ensure_tables(conn):
         # link. actual_account keeps the last name seen, for labels and as the
         # fallback when the id is gone (another budget file, say).
         ("actual_account_id", "ALTER TABLE bank_accounts ADD COLUMN actual_account_id TEXT DEFAULT ''"),
+        # The account's own IBAN, so the transfer matcher can tell which of
+        # the customer's accounts a payment went to. Stays on their server.
+        ("iban", "ALTER TABLE bank_accounts ADD COLUMN iban TEXT DEFAULT ''"),
     ]:
         try:
             conn.execute(sql)
@@ -233,7 +236,7 @@ def get_bank_account(account_id: int):
         return dict(row) if row else None
 
 def update_bank_account_field(account_id: int, field: str, value: str):
-    allowed = {"start_sync_date", "session_id", "account_uid", "session_expiry", "actual_account", "bank_name", "bank_country", "provider", "provider_credentials", "sync_mode", "license_seat_id", "skip_pending", "prefer_transaction_date", "actual_account_id"}
+    allowed = {"start_sync_date", "session_id", "account_uid", "session_expiry", "actual_account", "bank_name", "bank_country", "provider", "provider_credentials", "sync_mode", "license_seat_id", "skip_pending", "prefer_transaction_date", "actual_account_id", "iban"}
     if field not in allowed:
         raise ValueError(f"Field {field} is not updatable")
     with _conn() as conn:

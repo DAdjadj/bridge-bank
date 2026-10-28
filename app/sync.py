@@ -1,6 +1,6 @@
 import contextlib, os, json, sys, time, logging, datetime, decimal, requests
 
-from . import config, db, email_notify, licence
+from . import config, db, email_notify, enablebanking, licence
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -8,6 +8,9 @@ log = logging.getLogger(__name__)
 STATE_FILE = "/data/state.json"
 EB_API     = "https://api.enablebanking.com"
 TRANSFER_MATCH_WINDOW_DAYS = 3
+# How long the other side's IBAN is kept per transaction for the transfer
+# matcher. Both legs of a transfer arrive within days of each other.
+COUNTERPARTY_IBAN_KEEP_DAYS = 120
 # Booked transactions keep their booking date, so a reference-less booking only
 # ever matches its own earlier import on the same day. Anything wider would let
 # a genuine repeat purchase later in the week be swallowed as a duplicate.
@@ -202,6 +205,69 @@ def _counterparty_name(t):
 def _names_someone_else(t, own_names):
     name = _counterparty_name(t)
     return bool(name) and not _is_own_name(name, own_names)
+
+def _counterparty_iban(t):
+    """The IBAN of the account the money went to or came from, or ''."""
+    indic = (t.get("credit_debit_indicator") or t.get("credit_debit_indic", "")).upper()
+    party = "creditor" if indic == "DBIT" else "debtor"
+    return enablebanking.iban_of(t.get(f"{party}_account"))
+
+def _notes_with_iban(notes, iban):
+    """notes ending with "IBAN: <iban>", unless the bank's text already has it."""
+    if not iban or iban in "".join((notes or "").split()).upper():
+        return notes
+    return f"{notes} IBAN: {iban}" if notes else f"IBAN: {iban}"
+
+# Own IBANs seen when a bank was connected, by the session-scoped account uid,
+# until a bank_accounts row with that uid picks its IBAN up.
+ACCOUNT_IBANS_SETTING = "account_ibans"
+
+def remember_account_ibans(accounts):
+    """Keep the own IBAN of every account an authorization returned."""
+    found = {}
+    for a in accounts or []:
+        if not isinstance(a, dict):
+            continue
+        uid = a.get("uid") or a.get("account_uid") or a.get("resource_id")
+        iban = enablebanking.account_iban(a)
+        if uid and iban:
+            found[uid] = iban
+    if not found:
+        return
+    try:
+        known = json.loads(db.get_setting(ACCOUNT_IBANS_SETTING) or "{}")
+    except ValueError:
+        known = {}
+    known.update(found)
+    db.set_setting(ACCOUNT_IBANS_SETTING, json.dumps(known))
+    fill_own_ibans(db.get_all_bank_accounts())
+
+def fill_own_ibans(accounts):
+    """Give each connected account its own IBAN where one is known.
+
+    Updates the dicts in place too, so a sync that already loaded them sees it.
+    """
+    try:
+        known = json.loads(db.get_setting(ACCOUNT_IBANS_SETTING) or "{}")
+    except ValueError:
+        known = {}
+    if not known:
+        return
+    for a in accounts:
+        uid = a.get("account_uid")
+        iban = known.get(uid) if uid else None
+        if not iban:
+            continue
+        if a.get("iban") != iban:
+            a["iban"] = iban
+            if a.get("id") is not None:
+                db.update_bank_account_field(a["id"], "iban", iban)
+    # Uids of finished connections are not needed again; the rest wait for
+    # the account picker to turn them into rows.
+    held = {a.get("account_uid") for a in accounts}
+    keep = {uid: iban for uid, iban in known.items() if uid not in held}
+    if keep != known:
+        db.set_setting(ACCOUNT_IBANS_SETTING, json.dumps(keep))
 
 def _make_headers():
     import jwt, uuid, glob
@@ -1030,7 +1096,36 @@ def _could_be_own_transfer(a, b, named_refs, own_names):
                           getattr(b, "imported_description", "") or "")
     return True
 
-def _transfer_candidates_for(txn, candidates, named_refs=frozenset(), own_names=frozenset()):
+def _iban_verdict(a, b, counterparty_ibans, own_ibans):
+    """What the account numbers say about a and b being one transfer.
+
+    True when the bank put the other account's own IBAN on either leg, so the
+    money certainly went between these two accounts, whatever the names say.
+    False when a leg went to a different one of the customer's own accounts.
+    None when the numbers say nothing (no IBAN sent, an account whose own IBAN
+    is not known yet, or a payment to someone else's account); then the
+    amount, date and name checks decide, as they always have.
+
+    counterparty_ibans: {bank ref: the other side's IBAN}
+    own_ibans: {Actual account id: that account's own IBAN}
+    """
+    if not counterparty_ibans or not own_ibans:
+        return None
+    all_own = set(own_ibans.values())
+    confirmed = False
+    for leg, other in ((a, b), (b, a)):
+        sent = counterparty_ibans.get(getattr(leg, "financial_id", None))
+        if not sent:
+            continue
+        other_iban = own_ibans.get(_txn_account_id(other))
+        if other_iban and sent == other_iban:
+            confirmed = True
+        elif sent in all_own:
+            return False
+    return True if confirmed else None
+
+def _transfer_candidates_for(txn, candidates, named_refs=frozenset(), own_names=frozenset(),
+                             counterparty_ibans=None, own_ibans=None):
     txn_date = _txn_date(txn)
     txn_account = _txn_account_id(txn)
     txn_amount = getattr(txn, "amount", 0)
@@ -1042,19 +1137,28 @@ def _transfer_candidates_for(txn, candidates, named_refs=frozenset(), own_names=
             continue
         if getattr(other, "amount", 0) != -txn_amount:
             continue
-        if not _could_be_own_transfer(txn, other, named_refs, own_names):
+        verdict = _iban_verdict(txn, other, counterparty_ibans, own_ibans)
+        if verdict is False:
+            continue
+        if verdict is None and not _could_be_own_transfer(txn, other, named_refs, own_names):
             continue
         other_date = _txn_date(other)
         if other_date is None:
             continue
         distance = abs((other_date - txn_date).days)
         if distance <= TRANSFER_MATCH_WINDOW_DAYS:
-            matches.append((distance, other))
-    matches.sort(key=lambda item: (item[0], _txn_date(item[1]), str(item[1].id)))
-    return [other for _, other in matches]
+            matches.append((distance, verdict is True, other))
+    # A match the account numbers confirm beats any that only share an
+    # amount, which is what tells apart same-sum moves between several
+    # accounts that all carry the holder's name.
+    if any(confirmed for _, confirmed, _ in matches):
+        matches = [m for m in matches if m[1]]
+    matches.sort(key=lambda item: (item[0], _txn_date(item[2]), str(item[2].id)))
+    return [other for _, _, other in matches]
 
 def _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=False,
-                         named_refs=frozenset(), own_names=frozenset()):
+                         named_refs=frozenset(), own_names=frozenset(),
+                         counterparty_ibans=None, own_ibans=None):
     candidates = [
         t for t in transactions
         if _is_transfer_candidate(t, account_ids, allow_existing_transfers)
@@ -1074,14 +1178,16 @@ def _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=Fal
     outgoing = [t for t in candidates if getattr(t, "amount", 0) < 0]
     incoming = [t for t in candidates if getattr(t, "amount", 0) > 0]
 
-    incoming_matches = {t.id: _transfer_candidates_for(t, outgoing, named_refs, own_names)
+    incoming_matches = {t.id: _transfer_candidates_for(t, outgoing, named_refs, own_names,
+                                                       counterparty_ibans, own_ibans)
                         for t in incoming}
     pairs = []
     matched = set()
     for source in sorted(outgoing, key=lambda t: (_txn_date(t), abs(getattr(t, "amount", 0)), str(t.id))):
         if source.id in matched:
             continue
-        matches = _transfer_candidates_for(source, incoming, named_refs, own_names)
+        matches = _transfer_candidates_for(source, incoming, named_refs, own_names,
+                                           counterparty_ibans, own_ibans)
         if len(matches) != 1:
             continue
         dest = matches[0]
@@ -1300,7 +1406,7 @@ def check_actual_accounts(accounts, state):
         return {}
     return problems
 
-def _auto_link_internal_transfers(actual, accounts, named_refs=frozenset()):
+def _auto_link_internal_transfers(actual, accounts, named_refs=frozenset(), counterparty_ibans=None):
     if not _config_flag("AUTO_LINK_TRANSFERS", True):
         return 0
 
@@ -1314,6 +1420,7 @@ def _auto_link_internal_transfers(actual, accounts, named_refs=frozenset()):
     from actual.queries import get_payees, get_transactions
 
     account_by_id = {}
+    own_ibans = {}
     transactions = []
     start_date = _get_transfer_match_start(transfer_accounts)
     end_date = datetime.date.today() + datetime.timedelta(days=1)
@@ -1326,6 +1433,8 @@ def _auto_link_internal_transfers(actual, accounts, named_refs=frozenset()):
         if not account_obj or account_obj.id in account_by_id:
             continue
         account_by_id[account_obj.id] = account_obj
+        if a.get("iban"):
+            own_ibans[account_obj.id] = a["iban"]
         transactions.extend(
             get_transactions(
                 actual.session,
@@ -1351,7 +1460,8 @@ def _auto_link_internal_transfers(actual, accounts, named_refs=frozenset()):
     linked = removed = 0
     txn_by_id = {t.id: t for t in transactions}
     for source, dest in _find_transfer_pairs(transactions, account_ids, allow_existing_transfers=True,
-                                             named_refs=named_refs, own_names=_own_names()):
+                                             named_refs=named_refs, own_names=_own_names(),
+                                             counterparty_ibans=counterparty_ibans, own_ibans=own_ibans):
         if not _can_relink_imported_pair(source, dest, txn_by_id, account_ids):
             continue
         removed += _remove_generated_counterparts(actual.session, source, dest, txn_by_id)
@@ -1516,6 +1626,7 @@ def _sync_account(account, state):
 
             skip_pending = bool(account.get("skip_pending"))
             prefer_transaction_date = bool(account.get("prefer_transaction_date"))
+            iban_in_notes = _config_flag("IBAN_IN_NOTES", False)
 
             with _actual_phase(bank_label, "reconcile fetched transactions"):
                 for txn in raw:
@@ -1530,6 +1641,8 @@ def _sync_account(account, state):
                         notes  = _parse_notes(txn)
                         if notes and notes.strip().lower() == payee.strip().lower():
                             notes = ""
+                        if iban_in_notes:
+                            notes = _notes_with_iban(notes, _counterparty_iban(txn))
                         ref    = _get_entry_ref(txn)
                         key    = f"{date}|{amount}"
 
@@ -1677,8 +1790,30 @@ def _sync_account(account, state):
     acct_state["pending_map"]     = pending_map
     acct_state["imported_refs"]   = list(imported_refs)
     acct_state["named_refs"]      = sorted(named_refs)
+    acct_state["counterparty_ibans"] = _remember_counterparty_ibans(
+        acct_state.get("counterparty_ibans"), raw, prefer_transaction_date=bool(account.get("prefer_transaction_date")))
     state["accounts"][account_id] = acct_state
     return True, added + updated, "OK"
+
+def _remember_counterparty_ibans(kept, raw, prefer_transaction_date=False, today=None):
+    """{bank ref: [other side's IBAN, date]} for the transfer matcher.
+
+    Recent transactions only: both legs of a transfer arrive within days, so
+    older entries are dropped and the file does not grow forever.
+    """
+    today = today or datetime.date.today()
+    cutoff = (today - datetime.timedelta(days=COUNTERPARTY_IBAN_KEEP_DAYS)).isoformat()
+    kept = dict(kept or {})
+    for t in raw:
+        ref = _get_entry_ref(t)
+        iban = _counterparty_iban(t)
+        if ref and iban:
+            try:
+                kept[ref] = [iban, _parse_date(t, prefer_transaction_date).isoformat()]
+            except Exception:
+                kept[ref] = [iban, today.isoformat()]
+    return {ref: v for ref, v in kept.items()
+            if isinstance(v, list) and len(v) == 2 and v[1] >= cutoff}
 
 def bank_label(account):
     """Human label for an account, used in sync-log messages and the UI.
@@ -1732,6 +1867,10 @@ def run(only_account_id=None):
         pass
 
     all_accounts = db.get_all_bank_accounts()
+    try:
+        fill_own_ibans(all_accounts)
+    except Exception as e:
+        log.warning("Could not fill in account IBANs: %s", e)
     if not all_accounts:
         # Still report the (empty) seat list so the license server releases
         # this machine's seats; otherwise removing every bank leaves stale
@@ -1813,11 +1952,18 @@ def run(only_account_id=None):
             for acct_state in state.get("accounts", {}).values()
             for ref in acct_state.get("named_refs", [])
         }
+        counterparty_ibans = {
+            ref: entry[0]
+            for acct_state in state.get("accounts", {}).values()
+            for ref, entry in (acct_state.get("counterparty_ibans") or {}).items()
+            if isinstance(entry, list) and entry
+        }
 
         def link_internal_transfers():
             with _actual_client("Internal transfers") as actual:
                 with _actual_phase("Internal transfers", "scan and link transfers"):
-                    linked = _auto_link_internal_transfers(actual, all_accounts, named_refs)
+                    linked = _auto_link_internal_transfers(actual, all_accounts, named_refs,
+                                                           counterparty_ibans)
                 if linked:
                     with _actual_phase("Internal transfers", "commit transfer links"):
                         actual.commit()

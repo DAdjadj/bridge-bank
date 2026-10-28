@@ -267,6 +267,77 @@ def _remember_session_accounts(session_id, accounts):
             for a in accounts if isinstance(a, dict) and _account_uid_of(a)])
     except Exception as e:
         logger.warning("Could not record the accounts of session %s: %s", session_id, e)
+    try:
+        sync.remember_account_ibans(accounts)
+    except Exception as e:
+        logger.warning("Could not record the IBANs of session %s: %s", session_id, e)
+
+_iban_lookup_lock = threading.Lock()
+IBAN_LOOKUP_MAX_DAYS = 3
+
+def _look_up_missing_ibans():
+    """Fetch the own IBAN of accounts connected before Bridge Bank kept it.
+
+    Runs while the customer has a page open, with their IP and browser sent
+    along, so the bank counts it as the account holder being present and not
+    as one of the four daily background requests the syncs rely on. Each
+    account is tried at most once a day and on three days in all (a bank
+    that never answers is not asked forever), and a failure changes nothing.
+    """
+    import datetime, json
+    missing = [a for a in db.get_all_bank_accounts()
+               if a.get("sync_mode") != "balance"
+               and (a.get("provider") or "enablebanking") == "enablebanking"
+               and a.get("account_uid") and not a.get("iban")]
+    if not missing:
+        return
+    today = datetime.date.today().isoformat()
+    try:
+        tried = json.loads(db.get_setting("iban_lookup_tried") or "{}")
+    except ValueError:
+        tried = {}
+
+    def due(a):
+        last, count = (tried.get(str(a["id"])) or ["", 0])[:2]
+        return last != today and count < IBAN_LOOKUP_MAX_DAYS
+
+    todo = [a for a in missing if due(a)]
+    if not todo or not _iban_lookup_lock.acquire(blocking=False):
+        return
+    try:
+        forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        psu_ip = forwarded or request.remote_addr or ""
+        psu_user_agent = request.headers.get("User-Agent") or ""
+        for a in todo:
+            count = (tried.get(str(a["id"])) or ["", 0])[1]
+            tried[str(a["id"])] = [today, count + 1]
+        db.set_setting("iban_lookup_tried", json.dumps(tried))
+    except Exception:
+        _iban_lookup_lock.release()
+        raise
+
+    def look_up():
+        from .. import enablebanking
+        try:
+            for a in todo:
+                try:
+                    iban = enablebanking.fetch_account_iban(a["account_uid"], psu_ip, psu_user_agent)
+                except Exception as e:
+                    logger.info("Could not read the IBAN of %s yet: %s", sync.bank_label(a), e)
+                    continue
+                if iban:
+                    db.update_bank_account_field(a["id"], "iban", iban)
+                    logger.info("Stored the account's own IBAN for %s", sync.bank_label(a))
+        finally:
+            _iban_lookup_lock.release()
+
+    threading.Thread(target=look_up, daemon=True).start()
+
+def _start_iban_lookup():
+    try:
+        _look_up_missing_ibans()
+    except Exception as e:
+        logger.warning("Could not start the IBAN lookup: %s", e)
 
 def _rebind_candidates(bank_name, bank_country, newest_session_id, newest_accounts, look_up_older=False):
     """Every account at one bank left on an older session, with what the newest could take.
@@ -836,6 +907,8 @@ def change_actual_account():
 
 @app.route("/bank", methods=["GET", "POST"])
 def bank():
+    if request.method == "GET" and config.is_connected():
+        _start_iban_lookup()
     # /callback and other flows redirect here with ?error=<message>
     error    = request.args.get("error")
     notice   = request.args.get("notice")
@@ -1822,6 +1895,7 @@ def status():
         return redirect(url_for("setup_license"))
     if not config.is_connected():
         return redirect(url_for("bank"))
+    _start_iban_lookup()
 
     page         = request.args.get("page", 1, type=int)
     log_data     = db.get_sync_log_page(page=page, per_page=5)

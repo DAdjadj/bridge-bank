@@ -1,4 +1,4 @@
-import time, uuid, logging, requests
+import re, time, uuid, logging, requests
 from datetime import datetime, timezone
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 import jwt
@@ -87,6 +87,61 @@ def start_auth(bank_name: str, bank_country: str, psu_type: str = "") -> dict:
     r = requests.post(f"{EB_API}/auth", json=body, headers=_make_headers())
     r.raise_for_status()
     return {"url": r.json()["url"]}
+
+_IBAN_SHAPE = re.compile(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{8,30}$")
+
+def clean_iban(value) -> str:
+    """An IBAN without spaces, in capitals, or '' when value is not one."""
+    if not isinstance(value, str):
+        return ""
+    iban = "".join(value.split()).upper()
+    return iban if _IBAN_SHAPE.match(iban) else ""
+
+def iban_of(identification) -> str:
+    """The IBAN in an Enable Banking AccountIdentification, or ''.
+
+    Banks send it as {"iban": ...}, or under "other" with an IBAN scheme.
+    """
+    if not isinstance(identification, dict):
+        return ""
+    iban = clean_iban(identification.get("iban") or identification.get("IBAN"))
+    if iban:
+        return iban
+    other = identification.get("other")
+    if isinstance(other, dict) and (other.get("scheme_name") or "").upper() == "IBAN":
+        return clean_iban(other.get("identification"))
+    return ""
+
+def account_iban(account) -> str:
+    """A connected account's own IBAN from an Enable Banking account object, or ''."""
+    if not isinstance(account, dict):
+        return ""
+    iban = clean_iban(account.get("iban")) or iban_of(account.get("account_id"))
+    if iban:
+        return iban
+    for alt in account.get("all_account_ids") or []:
+        if isinstance(alt, dict) and (alt.get("scheme_name") or "").upper() == "IBAN":
+            iban = clean_iban(alt.get("identification"))
+            if iban:
+                return iban
+    return ""
+
+def fetch_account_iban(account_uid: str, psu_ip: str = "", psu_user_agent: str = "") -> str:
+    """Ask Enable Banking for one account's own IBAN.
+
+    Only called while the customer has Bridge Bank open, and sent with their
+    IP and browser, which tells the bank the account holder is present. PSD2
+    caps the requests a bank must answer without the holder present at four a
+    day, and the scheduled syncs may need all four.
+    """
+    headers = _make_headers()
+    if psu_ip:
+        headers["Psu-Ip-Address"] = psu_ip
+    if psu_user_agent:
+        headers["Psu-User-Agent"] = psu_user_agent[:255]
+    r = requests.get(f"{EB_API}/accounts/{account_uid}/details", headers=headers, timeout=20)
+    r.raise_for_status()
+    return account_iban(r.json())
 
 def complete_auth(code: str, state: str) -> dict:
     """Complete OAuth flow. Returns dict with session_id, account_uid, valid_until or None on failure."""
