@@ -697,6 +697,11 @@ def setup_sync():
             for value in auto_link_transfer_values
         )
         config.set("AUTO_LINK_TRANSFERS", "true" if auto_link_transfers else "false")
+        # A form without the field (an older page still open) leaves it as is.
+        iban_in_notes_values = [v.strip().lower() for v in request.form.getlist("iban_in_notes")]
+        if iban_in_notes_values:
+            iban_in_notes = any(v in ("1", "true", "yes", "on") for v in iban_in_notes_values)
+            config.set("IBAN_IN_NOTES", "true" if iban_in_notes else "false")
         if start_date:
             config.set("START_SYNC_DATE", start_date)
         _start_scheduler_if_ready()
@@ -707,6 +712,7 @@ def setup_sync():
         sync_time=config.SYNC_TIME or "06:00",
         sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or "24",
         auto_link_transfers=_config_bool("AUTO_LINK_TRANSFERS", True),
+        iban_in_notes=_config_bool("IBAN_IN_NOTES", False),
         start_sync_date=config.START_SYNC_DATE or __import__('datetime').date.today().isoformat(),
         is_configured=config.is_configured(),
         has_synced=has_synced,
@@ -1984,6 +1990,7 @@ def status():
         sync_time=config.SYNC_TIME,
         sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or '24',
         auto_link_transfers=_config_bool("AUTO_LINK_TRANSFERS", True),
+        iban_in_notes=_config_bool("IBAN_IN_NOTES", False),
         sync_times=_get_sync_times(),
         timezone=config.TIMEZONE or "",
         notify_email=config.NOTIFY_EMAIL,
