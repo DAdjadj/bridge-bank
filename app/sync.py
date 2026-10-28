@@ -1884,6 +1884,9 @@ def run(only_account_id=None, holder=None):
     holder: PSU headers from holder_headers() when a person pressed Sync now.
     """
     _holder.headers = holder or {}
+    if _holder.headers:
+        # Support reads this to tell a Sync now from a scheduled sync.
+        log.info("Sync asked for by the account holder: banks get their IP address and browser")
     try:
         return _run(only_account_id)
     finally:
