@@ -348,3 +348,58 @@ class FullSyncTest(unittest.TestCase):
         self.assertEqual(txns["rev-1"].notes, f"Savings top-up IBAN: {OPENBANK}")
         self.assertEqual(txns["ing-1"].notes, "IBAN: NL02ABNA0123456789")
         self.assertEqual(txns["rev-2"].notes, "Card payment")
+
+
+class OwnIbanOnTheWrongSideTest(unittest.TestCase):
+    """A bank that puts the account's own IBAN where the other side belongs
+    must not block a pair or put the account's own number in its notes."""
+
+    def test_own_iban_is_not_the_counterparty(self):
+        swapped = {"credit_debit_indicator": "DBIT", "creditor_account": {"iban": REVOLUT}}
+        self.assertEqual(_counterparty_iban(swapped, REVOLUT), "")
+        self.assertEqual(_counterparty_iban(swapped), REVOLUT)  # without knowing it, nothing to compare
+
+    def test_own_iban_is_not_remembered(self):
+        raw = [{"entry_reference": "x", "booking_date": "2026-10-28",
+                "credit_debit_indicator": "DBIT", "creditor_account": {"iban": REVOLUT}}]
+        self.assertEqual(_remember_counterparty_ibans({}, raw, today=datetime.date(2026, 10, 28),
+                                                      own_iban=REVOLUT), {})
+
+    def test_own_iban_on_a_leg_does_not_rule_the_pair_out(self):
+        out = txn("out", "revolut", -100, "2026-10-28")
+        into = txn("in", "openbank", 100, "2026-10-28")
+        self.assertIsNone(_iban_verdict(out, into, {"bank-out": REVOLUT}, OWN))
+        self.assertEqual(
+            _find_transfer_pairs([out, into], {"revolut", "openbank"},
+                                 counterparty_ibans={"bank-out": REVOLUT}, own_ibans=OWN),
+            [(out, into)])
+
+    def test_the_other_leg_can_still_confirm(self):
+        out = txn("out", "revolut", -100, "2026-10-28")
+        into = txn("in", "openbank", 100, "2026-10-28")
+        self.assertIs(_iban_verdict(out, into, {"bank-out": REVOLUT, "bank-in": REVOLUT}, OWN), True)
+
+
+class SwappedFieldsFullSyncTest(FullSyncTest):
+    """The full sync again, with a bank that swaps the fields on Revolut."""
+
+    def setUp(self):
+        super().setUp()
+        self.raw["uid-Revolut"][0]["creditor_account"] = {"iban": REVOLUT}
+        self.raw["uid-Revolut"][0]["debtor_account"] = {"iban": OPENBANK}
+        # Openbank's leg names Revolut correctly, so the pair is still certain.
+        self.raw["uid-Openbank"][0]["debtor_account"] = {"iban": REVOLUT}
+
+    def test_transfer_pairs_with_the_account_its_iban_names(self):
+        linked, txns = self._sync(iban_in_notes=False)
+        self.assertEqual(linked, 1)
+        self.assertEqual(txns["rev-1"].transferred_id, txns["ob-1"].id)
+
+    def test_notes_stay_as_they_were_with_the_option_off(self):
+        _, txns = self._sync(iban_in_notes=False)
+        self.assertEqual(txns["rev-1"].notes, "Savings top-up")
+
+    def test_notes_end_with_the_iban_with_the_option_on(self):
+        _, txns = self._sync(iban_in_notes=True)
+        self.assertEqual(txns["rev-1"].notes, "Savings top-up")  # its own number is not added
+        self.assertEqual(txns["ob-1"].notes, f"IBAN: {REVOLUT}")

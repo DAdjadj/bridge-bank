@@ -206,11 +206,17 @@ def _names_someone_else(t, own_names):
     name = _counterparty_name(t)
     return bool(name) and not _is_own_name(name, own_names)
 
-def _counterparty_iban(t):
-    """The IBAN of the account the money went to or came from, or ''."""
+def _counterparty_iban(t, own_iban=""):
+    """The IBAN of the account the money went to or came from, or ''.
+
+    A bank that fills the creditor and debtor fields the wrong way round would
+    hand back the account's own IBAN here; that is never the other side, so
+    it counts as no IBAN at all.
+    """
     indic = (t.get("credit_debit_indicator") or t.get("credit_debit_indic", "")).upper()
     party = "creditor" if indic == "DBIT" else "debtor"
-    return enablebanking.iban_of(t.get(f"{party}_account"))
+    iban = enablebanking.iban_of(t.get(f"{party}_account"))
+    return "" if own_iban and iban == own_iban else iban
 
 def _notes_with_iban(notes, iban):
     """notes ending with "IBAN: <iban>", unless the bank's text already has it."""
@@ -1115,7 +1121,9 @@ def _iban_verdict(a, b, counterparty_ibans, own_ibans):
     confirmed = False
     for leg, other in ((a, b), (b, a)):
         sent = counterparty_ibans.get(getattr(leg, "financial_id", None))
-        if not sent:
+        # A leg's own IBAN is never its other side (a bank that swaps the
+        # fields); treat it as no information rather than ruling a pair out.
+        if not sent or sent == own_ibans.get(_txn_account_id(leg)):
             continue
         other_iban = own_ibans.get(_txn_account_id(other))
         if other_iban and sent == other_iban:
@@ -1642,7 +1650,7 @@ def _sync_account(account, state):
                         if notes and notes.strip().lower() == payee.strip().lower():
                             notes = ""
                         if iban_in_notes:
-                            notes = _notes_with_iban(notes, _counterparty_iban(txn))
+                            notes = _notes_with_iban(notes, _counterparty_iban(txn, account.get("iban")))
                         ref    = _get_entry_ref(txn)
                         key    = f"{date}|{amount}"
 
@@ -1791,11 +1799,12 @@ def _sync_account(account, state):
     acct_state["imported_refs"]   = list(imported_refs)
     acct_state["named_refs"]      = sorted(named_refs)
     acct_state["counterparty_ibans"] = _remember_counterparty_ibans(
-        acct_state.get("counterparty_ibans"), raw, prefer_transaction_date=bool(account.get("prefer_transaction_date")))
+        acct_state.get("counterparty_ibans"), raw, prefer_transaction_date=bool(account.get("prefer_transaction_date")),
+        own_iban=account.get("iban") or "")
     state["accounts"][account_id] = acct_state
     return True, added + updated, "OK"
 
-def _remember_counterparty_ibans(kept, raw, prefer_transaction_date=False, today=None):
+def _remember_counterparty_ibans(kept, raw, prefer_transaction_date=False, today=None, own_iban=""):
     """{bank ref: [other side's IBAN, date]} for the transfer matcher.
 
     Recent transactions only: both legs of a transfer arrive within days, so
@@ -1806,7 +1815,7 @@ def _remember_counterparty_ibans(kept, raw, prefer_transaction_date=False, today
     kept = dict(kept or {})
     for t in raw:
         ref = _get_entry_ref(t)
-        iban = _counterparty_iban(t)
+        iban = _counterparty_iban(t, own_iban)
         if ref and iban:
             try:
                 kept[ref] = [iban, _parse_date(t, prefer_transaction_date).isoformat()]
