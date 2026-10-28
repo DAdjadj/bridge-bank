@@ -113,17 +113,17 @@ class AlertContentTest(unittest.TestCase):
         self.assertFalse(e.get("accounts"))
 
     def test_us_date_and_time(self):
-        self.assertEqual(email_notify._day_short(NOW), "Oct 26")
-        self.assertEqual(email_notify._day_long(NOW), "Monday, October 26")
-        self.assertEqual(email_notify._when(NOW), "Oct 26, 7:00 AM")
-        self.assertEqual(email_notify._when(NOW.replace(hour=0, minute=5)), "Oct 26, 12:05 AM")
-        self.assertEqual(email_notify._when(NOW.replace(hour=12)), "Oct 26, 12:00 PM")
-        self.assertEqual(email_notify._when(NOW.replace(hour=19, minute=30)), "Oct 26, 7:30 PM")
+        self.assertEqual(email_notify._day_short(NOW), "26 Oct")
+        self.assertEqual(email_notify._day_long(NOW), "Monday 26 October")
+        self.assertEqual(email_notify._when(NOW), "26 Oct, 7:00 AM")
+        self.assertEqual(email_notify._when(NOW.replace(hour=0, minute=5)), "26 Oct, 12:05 AM")
+        self.assertEqual(email_notify._when(NOW.replace(hour=12)), "26 Oct, 12:00 PM")
+        self.assertEqual(email_notify._when(NOW.replace(hour=19, minute=30)), "26 Oct, 7:30 PM")
 
     def test_trial_and_session_dates(self):
         subject, e = email_notify.build_trial_expiry_warning(3)
         self.assertEqual(subject, "Bridge Bank: trial expires in 3 days")
-        self.assertIn({"label": "Ends", "value": "Thursday, October 29", "wide": True}, e["facts"])
+        self.assertIn({"label": "Ends", "value": "Thursday 29 October", "wide": True}, e["facts"])
         subject, e = email_notify.build_trial_expiry_warning(1)
         self.assertEqual(subject, "Bridge Bank: trial expires in 1 day")
         self.assertEqual(e["title"], "Your trial ends tomorrow")

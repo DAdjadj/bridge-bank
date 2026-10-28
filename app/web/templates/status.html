@@ -384,7 +384,7 @@ document.querySelectorAll('.utc-time').forEach(function(el) {
   if (!raw || raw === 'Never') return;
   var d = new Date(raw + 'Z');
   if (isNaN(d)) return;
-  el.textContent = d.toLocaleString(undefined, {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+  el.textContent = d.toLocaleString('en-GB', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
 });
 </script>
 {% endblock %}

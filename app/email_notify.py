@@ -177,15 +177,15 @@ def _now() -> datetime.datetime:
         return datetime.datetime.now(datetime.timezone.utc)
 
 
-def _day_long(d) -> str:   # "Thursday, October 29"
-    return f"{_DAYS[d.weekday()]}, {_MONTHS[d.month - 1]} {d.day}"
+def _day_long(d) -> str:   # "Thursday 29 October"
+    return f"{_DAYS[d.weekday()]} {d.day} {_MONTHS[d.month - 1]}"
 
 
-def _day_short(d) -> str:  # "Oct 29"
-    return f"{_MONTHS[d.month - 1][:3]} {d.day}"
+def _day_short(d) -> str:  # "29 Oct"
+    return f"{d.day} {_MONTHS[d.month - 1][:3]}"
 
 
-def _when(dt) -> str:      # "Oct 26, 7:00 AM"
+def _when(dt) -> str:      # "26 Oct, 7:00 AM"
     return f"{_day_short(dt)}, {dt.hour % 12 or 12}:{dt:%M} {'AM' if dt.hour < 12 else 'PM'}"
 
 
