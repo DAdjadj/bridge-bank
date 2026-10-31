@@ -7,6 +7,14 @@ on:
 permissions:
   contents: write
 
+# One release at a time. Two pushes close together used to build side by side,
+# pick the same version number and collide on the git tag. A push made while a
+# build runs now waits for it (a newer push replaces one still waiting, which
+# is fine: it contains the waiting commit).
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,6 +41,16 @@ jobs:
           done
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      # Claim the version before any image is pushed: if the tag is already
+      # taken, the run stops here and Docker Hub is left untouched.
+      - name: Tag version in git
+        id: tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -46,6 +64,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -59,12 +78,11 @@ jobs:
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
 
-      - name: Tag version in git
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+      # The tag was claimed but no image went out: give the version back so
+      # the next run reuses it and its release notes include this commit.
+      - name: Release the unused tag
+        if: failure() && steps.tag.outcome == 'success' && steps.build.outcome != 'success'
+        run: git push origin --delete "v${{ steps.version.outputs.version }}"
 
       # Publish a GitHub Release for the new tag so deployment tools (Komodo,
       # Docker Scout, etc.) can surface release notes. Non-fatal: a release
