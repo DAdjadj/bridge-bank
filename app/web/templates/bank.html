@@ -45,8 +45,8 @@
       <input type="hidden" name="action" value="upload_pem">
       <label style="margin-top:0;">Private key file (.pem)</label>
       <input type="file" name="pem_file" id="pem-file-input" accept=".pem" required onchange="autoFillAppId(this)">
-      <div class="field-hint">Your <code style="font-size:11px;color:#94a3b8;">private.pem</code> file from the Enable Banking dashboard. It stays on your server and is never shared.</div>
-      <label>Application ID <span style="font-size:11px;font-weight:400;color:#4a5568;">(auto-filled from filename)</span></label>
+      <div class="field-hint">Your <code style="font-size:11px;color:var(--text-2);">private.pem</code> file from the Enable Banking dashboard. It stays on your server and is never shared.</div>
+      <label>Application ID <span style="font-size:11px;font-weight:400;color:var(--muted);">(auto-filled from filename)</span></label>
       <input type="text" name="eb_app_id" id="eb-app-id-input" value="{{ eb_app_id }}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
       <div class="field-hint">Filled automatically from your .pem filename. From your <a href="https://enablebanking.com/" target="_blank">Enable Banking dashboard</a> under Applications.</div>
       <script>
@@ -69,17 +69,17 @@
     <div class="card-sub">Step 4 of 5 — search for your bank and authorize read-only access.</div>
 
     <div style="margin-bottom:1rem;padding:10px 14px;background:rgba(16,185,129,0.07);border:1px solid rgba(16,185,129,0.2);border-radius:8px;font-size:13px;color:#6ee7b7;display:flex;align-items:center;gap:8px;">
-      <span>&#10003;</span> Private key loaded. <a href="/bank/reset-pem" style="color:#94a3b8;font-size:12px;margin-left:auto;">Replace</a>
+      <span>&#10003;</span> Private key loaded. <a href="/bank/reset-pem" style="color:var(--text-2);font-size:12px;margin-left:auto;">Replace</a>
     </div>
 
     {% if all_accounts %}
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;margin-bottom:0.5rem;">Connected accounts ({{ bank_seat_usage }}/{{ bank_account_limit }} across all machines)</div>
-    <div style="font-size:11px;color:#4a5568;margin-bottom:0.75rem;">Reset sync re-imports transactions from the start date. Existing transactions won't be duplicated.</div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-2);margin-bottom:0.5rem;">Connected accounts ({{ bank_seat_usage }}/{{ bank_account_limit }} across all machines)</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:0.75rem;">Reset sync re-imports transactions from the start date. Existing transactions won't be duplicated.</div>
     {% for s in split_banks or [] %}
     {% set it = 'it' if s.stale_names | length == 1 else 'them' %}
     <div style="margin-bottom:0.75rem;padding:12px 14px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.35);border-radius:8px;">
       <div style="font-size:13px;font-weight:600;color:#fbbf24;">{{ s.bank_name }}{% if s.bank_country %} ({{ s.bank_country }}){% endif %}: accounts are on different connections</div>
-      <div style="font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.5;">
+      <div style="font-size:12px;color:var(--text-2);margin-top:6px;line-height:1.5;">
         {{ s.stale_names | join(', ') }} {% if s.stale_names | length == 1 %}is{% else %}are{% endif %} on an older connection than {{ s.newest_account }}{% if s.covered %}, and the newest connection covers {{ it }} too{% endif %}.
         {% if s.stopped %}Your bank is refusing that older connection, which is what banks that allow only one active connection do once a newer one exists.{% else %}Banks that allow only one active connection revoke the older one, which would stop {{ it }} syncing.{% endif %}
         {% if s.covered %}Re-binding moves {{ it }} onto the newest connection and needs no new bank login.{% else %}Re-binding checks whether the newest connection covers {{ it }} and, if it does, moves {{ it }} there with no new bank login.{% endif %}
@@ -92,8 +92,8 @@
     </div>
     {% endfor %}
     {% for a in all_accounts %}
-    <div style="margin-bottom:0.75rem;padding:12px 14px;border:1px solid #253450;border-radius:8px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div style="margin-bottom:0.75rem;padding:12px 14px;border:1px solid var(--line);border-radius:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
           {% if a.needs_reauth %}
           <div class="connected-pill" style="background:rgba(239,68,68,0.12);color:#f87171;border-color:rgba(239,68,68,0.4);">Needs re-authorization</div>
@@ -102,13 +102,13 @@
           {% else %}
           <div class="connected-pill">Connected</div>
           {% endif %}
-          <div style="margin-top:8px;font-size:12px;color:#94a3b8;">
+          <div style="margin-top:8px;font-size:12px;color:var(--text-2);">
             {% if a.sync_mode == 'balance' %}
-            {{ loop.index }}. {{ a.bank_name }} &rarr; {{ a.actual_account }} <span style="font-size:10px;color:#4a5568;margin-left:4px;">balance only</span>
+            {{ loop.index }}. {{ a.bank_name }} &rarr; {{ a.actual_account }} <span style="font-size:10px;color:var(--muted);margin-left:4px;">balance only</span>
             {% else %}
             {{ loop.index }}. {{ a.bank_name }} ({{ a.bank_country }}) &rarr; {{ a.actual_account }}
             {% endif %}
-            <button type="button" id="change-actual-btn-{{ a.id }}" onclick="openActualPicker({{ a.id }})" style="background:none;border:none;cursor:pointer;font-size:11px;color:#94a3b8;text-decoration:underline;padding:0;margin-left:6px;">Change</button>
+            <button type="button" id="change-actual-btn-{{ a.id }}" onclick="openActualPicker({{ a.id }})" style="background:none;border:none;cursor:pointer;font-size:11px;color:var(--text-2);text-decoration:underline;padding:0;margin-left:6px;">Change</button>
           </div>
           <form method="POST" action="/bank/actual-account" id="change-actual-form-{{ a.id }}" style="display:none;margin-top:8px;gap:4px;align-items:center;flex-wrap:wrap;"
                 data-balance="{{ '1' if a.sync_mode == 'balance' else '0' }}" data-current="{{ a.actual_account_id or '' }}"
@@ -116,10 +116,10 @@
             <input type="hidden" name="account_id" value="{{ a.id }}">
             <select name="actual_account_id" required style="font-size:11px;padding:4px 6px;max-width:220px;"><option value="">Loading accounts...</option></select>
             <button type="submit" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;">Save</button>
-            <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;color:#4a5568;" onclick="this.parentElement.style.display='none';document.getElementById('change-actual-btn-{{ a.id }}').style.display='';">Cancel</button>
+            <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;color:var(--muted);" onclick="this.parentElement.style.display='none';document.getElementById('change-actual-btn-{{ a.id }}').style.display='';">Cancel</button>
           </form>
         </div>
-        <div style="display:flex;gap:6px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;" onclick="syncAccount({{ a.id }}, this)">Sync now</button>
           {% if a.sync_mode != 'balance' %}
           <div>
@@ -128,24 +128,24 @@
               <input type="hidden" name="account_id" value="{{ a.id }}">
               <input type="date" name="reset_date" value="{{ a.start_sync_date or today }}" required style="font-size:11px;padding:4px 6px;">
               <button type="submit" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;">Confirm</button>
-              <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;color:#4a5568;" onclick="this.parentElement.style.display='none';document.getElementById('reset-btn-{{ a.id }}').style.display='';">Cancel</button>
+              <button type="button" class="btn btn-ghost" style="font-size:11px;padding:6px 10px;color:var(--muted);" onclick="this.parentElement.style.display='none';document.getElementById('reset-btn-{{ a.id }}').style.display='';">Cancel</button>
             </form>
           </div>
           {% endif %}
           <form method="POST" action="/disconnect" onsubmit="return confirm('Disconnect this account? Syncing will stop until you reconnect.');">
             <input type="hidden" name="account_id" value="{{ a.id }}">
-            <button type="submit" class="btn btn-danger">Disconnect</button>
+            <button type="submit" class="btn btn-danger" style="font-size:11px;padding:6px 10px;">Disconnect</button>
           </form>
         </div>
       </div>
       {% if a.sync_mode != 'balance' and a.session_expiry %}
-      <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#4a5568;">
+      <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);">
         <span>Expires {{ a.session_expiry[:10] }}</span>
         <form method="POST" action="/bank/reauthorise" style="display:inline;">
           <input type="hidden" name="account_id" value="{{ a.id }}">
           <input type="hidden" name="bank_name" value="{{ a.bank_name }}">
           <input type="hidden" name="bank_country" value="{{ a.bank_country }}">
-          <button type="submit" style="background:none;border:none;cursor:pointer;font-size:11px;text-decoration:underline;{% if a.needs_reauth %}color:#f87171;font-weight:600;{% else %}color:#94a3b8;{% endif %}">Re-authorize{% if a.needs_reauth %} now{% endif %}</button>
+          <button type="submit" style="background:none;border:none;cursor:pointer;font-size:11px;text-decoration:underline;{% if a.needs_reauth %}color:#f87171;font-weight:600;{% else %}color:var(--text-2);{% endif %}">Re-authorize{% if a.needs_reauth %} now{% endif %}</button>
         </form>
       </div>
       {% endif %}
@@ -154,7 +154,7 @@
         <form method="POST" action="/toggle-skip-pending" style="display:inline;" id="skip-pending-form-{{ a.id }}">
           <input type="hidden" name="account_id" value="{{ a.id }}">
           <input type="hidden" name="skip_pending" value="{{ '0' if a.skip_pending else '1' }}">
-          <span style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:#94a3b8;" onclick="this.querySelector('input[type=checkbox]').click();">
+          <span style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--text-2);" onclick="this.querySelector('input[type=checkbox]').click();">
             <input type="checkbox" {% if a.skip_pending %}checked{% endif %} onchange="document.getElementById('skip-pending-form-{{ a.id }}').submit();" onclick="event.stopPropagation();" style="width:14px;height:14px;margin:0;padding:0;appearance:auto;-webkit-appearance:auto;background:transparent;border:none;cursor:pointer;flex-shrink:0;">
             <span>Only sync booked transactions (skip pending)</span>
           </span>
@@ -164,31 +164,31 @@
         <form method="POST" action="/toggle-transaction-date" style="display:inline;" id="transaction-date-form-{{ a.id }}">
           <input type="hidden" name="account_id" value="{{ a.id }}">
           <input type="hidden" name="prefer_transaction_date" value="{{ '0' if a.prefer_transaction_date else '1' }}">
-          <span style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:#94a3b8;" onclick="this.querySelector('input[type=checkbox]').click();">
+          <span style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--text-2);" onclick="this.querySelector('input[type=checkbox]').click();">
             <input type="checkbox" {% if a.prefer_transaction_date %}checked{% endif %} onchange="document.getElementById('transaction-date-form-{{ a.id }}').submit();" onclick="event.stopPropagation();" style="width:14px;height:14px;margin:0;padding:0;appearance:auto;-webkit-appearance:auto;background:transparent;border:none;cursor:pointer;flex-shrink:0;">
             <span>Use the transaction date instead of the booking date</span>
           </span>
         </form>
-        <div style="margin-top:3px;margin-left:20px;font-size:10px;color:#4a5568;line-height:1.4;">
+        <div style="margin-top:3px;margin-left:20px;font-size:10px;color:var(--muted);line-height:1.4;">
           For banks that book a payment a day or more after it happens, so Actual shows the date your banking app shows. Transactions already imported keep the date they were imported with.
         </div>
       </div>
       {% endif %}
     </div>
     {% endfor %}
-    <hr style="border:none;border-top:1px solid #253450;margin:1.25rem 0;">
+    <hr style="border:none;border-top:1px solid var(--line);margin:1.25rem 0;">
     {% endif %}
 
     {% if bank_seat_usage >= bank_account_limit %}
-    <div style="padding:14px;background:#080b12;border:1px solid #253450;border-radius:8px;font-size:13px;color:#94a3b8;text-align:center;">
-      Account limit reached ({{ bank_seat_usage }}/{{ bank_account_limit }} across all machines). <a href="{{ bank_slot_url }}" target="_blank" style="color:#e8edf5;font-weight:600;">Add 1 more &rarr;</a>
+    <div style="padding:14px;background:var(--bp-deep);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--text-2);text-align:center;">
+      Account limit reached ({{ bank_seat_usage }}/{{ bank_account_limit }} across all machines). <a href="{{ bank_slot_url }}" target="_blank" style="color:var(--text);font-weight:600;">Add 1 more &rarr;</a>
     </div>
     {% else %}
     {% if balance_providers %}
     <!-- Mode toggle: Bank vs Investment provider -->
-    <div style="display:flex;gap:4px;margin-bottom:1rem;background:#080b12;border-radius:8px;padding:3px;border:1px solid #253450;">
-      <button type="button" id="mode-bank-btn" onclick="setMode('bank')" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:#10b981;color:#fff;">Bank</button>
-      <button type="button" id="mode-provider-btn" onclick="setMode('provider')" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#94a3b8;">Investment / Balance</button>
+    <div style="display:flex;gap:4px;margin-bottom:1rem;background:var(--bp-deep);border-radius:8px;padding:3px;border:1px solid var(--line);">
+      <button type="button" id="mode-bank-btn" onclick="setMode('bank')" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:var(--ink);color:var(--bp);">Bank</button>
+      <button type="button" id="mode-provider-btn" onclick="setMode('provider')" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:transparent;color:var(--text-2);">Investment / Balance</button>
     </div>
     {% endif %}
 
@@ -213,15 +213,15 @@
       <label>Search your bank</label>
       <div style="position:relative;">
         <input type="text" id="bank-search" placeholder="Type to search 2,500+ European banks..." autocomplete="off" oninput="filterBanks(this.value)" onfocus="showDropdown()">
-        <div id="bank-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#0f1420;border:1px solid #253450;border-top:none;border-radius:0 0 6px 6px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.4);"></div>
+        <div id="bank-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bp);border:1px solid var(--line);border-top:none;border-radius:0 0 6px 6px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.4);"></div>
       </div>
-      <div id="selected-bank" style="display:none;margin-top:0.75rem;padding:10px 12px;background:#080b12;border:1px solid #253450;border-radius:6px;font-size:13px;align-items:center;justify-content:space-between;">
-        <span id="selected-label" style="font-weight:600;color:#e8edf5;"></span>
-        <button type="button" onclick="clearBank()" style="background:none;border:none;color:#4a5568;cursor:pointer;font-size:11px;padding:0;">clear</button>
+      <div id="selected-bank" style="display:none;margin-top:0.75rem;padding:10px 12px;background:var(--bp-deep);border:1px solid var(--line);border-radius:6px;font-size:13px;align-items:center;justify-content:space-between;">
+        <span id="selected-label" style="font-weight:600;color:var(--text);"></span>
+        <button type="button" onclick="clearBank()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0;">clear</button>
       </div>
       <div class="field-hint">2,500+ banks across 29 European countries.</div>
       <div id="existing-connection" style="display:none;margin-top:0.75rem;padding:12px 14px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.35);border-radius:8px;">
-        <div style="font-size:12px;color:#94a3b8;line-height:1.5;">
+        <div style="font-size:12px;color:var(--text-2);line-height:1.5;">
           You already have <span id="existing-bank-label" style="color:#fbbf24;font-weight:600;"></span> connected. Authorizing it again creates a second connection, and banks that allow only one active connection revoke the first, which stops your existing accounts syncing. If the account you want is covered by the connection you already have, add it from there instead.
         </div>
         <button type="submit" formaction="/bank/add-from-connection" formnovalidate class="btn btn-ghost" style="margin-top:10px;font-size:11px;padding:6px 10px;">Add an account from the existing connection</button>
@@ -256,8 +256,8 @@
     </form>
     </div>
     {% endif %}
-    <div style="margin-top:12px;text-align:center;font-size:11px;color:#4a5568;">
-      {{ bank_seat_usage }}/{{ bank_account_limit }} bank slots used across all machines &middot; <a href="{{ bank_slot_url }}" target="_blank" style="color:#94a3b8;text-decoration:underline;">Add a slot (&euro;10) &rarr;</a>
+    <div style="margin-top:12px;text-align:center;font-size:11px;color:var(--muted);">
+      {{ bank_seat_usage }}/{{ bank_account_limit }} bank slots used across all machines &middot; <a href="{{ bank_slot_url }}" target="_blank" style="color:var(--text-2);text-decoration:underline;">Add a slot (&euro;10) &rarr;</a>
     </div>
     {% endif %}
   </div>
@@ -268,7 +268,7 @@
     <div class="card-sub">Approve access in your bank's login page. This page updates on its own.</div>
     <div style="text-align:center;padding:0.5rem 0 1rem;">
       <div style="font-size:15px;font-weight:600;margin-bottom:0.5rem;" id="auth-progress-title">Authorize your bank</div>
-      <div style="font-size:13px;color:#94a3b8;margin-bottom:1.5rem;line-height:1.6;" id="auth-progress-text">Click the button below to open your bank login in a new tab.<br>Keep this tab open. It will show when the connection is done.</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:1.5rem;line-height:1.6;" id="auth-progress-text">Click the button below to open your bank login in a new tab.<br>Keep this tab open. It will show when the connection is done.</div>
     </div>
     <a href="{{ auth_url }}" target="_blank" rel="noopener" class="btn btn-primary" id="auth-open-link">Open bank login &rarr;</a>
     <form method="POST" style="margin-top:0.75rem;" id="auth-cancel-form">
@@ -421,10 +421,10 @@
       <div onclick="selectBank('${b.name.replace(/'/g, "\'")}','${b.country}')" style="
         padding:9px 12px; cursor:pointer; font-size:13px;
         display:flex; justify-content:space-between; align-items:center;
-        border-bottom:1px solid #1e2a40;
-      " onmouseover="this.style.background='#161d2e'" onmouseout="this.style.background=''">
-        <span style="color:#e8edf5;">${b.name}</span>
-        <span style="font-size:11px;color:#4a5568;font-family:monospace;">${b.country}</span>
+        border-bottom:1px solid var(--line-soft);
+      " onmouseover="this.style.background='rgba(143,182,255,0.08)'" onmouseout="this.style.background=''">
+        <span style="color:var(--text);">${b.name}</span>
+        <span style="font-size:11px;color:var(--muted);font-family:monospace;">${b.country}</span>
       </div>
     `).join('');
     dd.style.display = 'block';
@@ -442,7 +442,7 @@
     var btn = document.getElementById('connect-btn');
     var ready = bankSelected && accountFilled;
     btn.disabled = !ready;
-    btn.style.background = ready ? '#10b981' : 'var(--surface2)';
+    btn.style.background = ready ? 'var(--accent)' : 'var(--surface2)';
     btn.style.opacity = ready ? '1' : '0.5';
   }
 
@@ -490,16 +490,16 @@
       bankDiv.style.display = 'none';
       provDiv.style.display = 'block';
       bankBtn.style.background = 'transparent';
-      bankBtn.style.color = '#94a3b8';
-      provBtn.style.background = '#10b981';
-      provBtn.style.color = '#fff';
+      bankBtn.style.color = 'var(--text-2)';
+      provBtn.style.background = 'var(--ink)';
+      provBtn.style.color = 'var(--bp)';
     } else {
       bankDiv.style.display = 'block';
       provDiv.style.display = 'none';
-      bankBtn.style.background = '#10b981';
-      bankBtn.style.color = '#fff';
+      bankBtn.style.background = 'var(--ink)';
+      bankBtn.style.color = 'var(--bp)';
       provBtn.style.background = 'transparent';
-      provBtn.style.color = '#94a3b8';
+      provBtn.style.color = 'var(--text-2)';
     }
   }
 
@@ -557,7 +557,7 @@
       inputs.forEach(function(inp) { if (!inp.value.trim()) ready = false; });
     }
     btn.disabled = !ready;
-    btn.style.background = ready ? '#10b981' : 'var(--surface2)';
+    btn.style.background = ready ? 'var(--accent)' : 'var(--surface2)';
     btn.style.opacity = ready ? '1' : '0.5';
   }
 </script>

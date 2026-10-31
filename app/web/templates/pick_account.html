@@ -22,8 +22,8 @@
     <input type="hidden" name="session_id" value="{{ picker_session_id }}">
     <input type="hidden" name="mapping_mode" value="1">
     {% for s, options, matched in mapping_rows %}
-    <div style="padding:14px 16px; border:1px solid #253450; border-radius:8px; margin-bottom:0.5rem;">
-      <div style="font-size:14px; font-weight:600; color:#e8edf5; margin-bottom:8px;">{{ s.actual_account }}</div>
+    <div style="padding:14px 16px; border:1px solid var(--line); border-radius:8px; margin-bottom:0.5rem;">
+      <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px;">{{ s.actual_account }}</div>
       <select name="map_{{ s.id }}" style="width:100%; font-size:13px; padding:8px 10px;">
         <option value="">Do not reconnect this account</option>
         {% for acct in options %}
@@ -31,11 +31,11 @@
         {% endfor %}
       </select>
       {% if rebinding and not matched %}
-      <div style="font-size:11px; color:#94a3b8; margin-top:6px;">Bridge Bank could not confirm which of these is the bank account {{ s.actual_account }} syncs, so choose carefully, or leave it as it is.</div>
+      <div style="font-size:11px; color:var(--text-2); margin-top:6px;">Bridge Bank could not confirm which of these is the bank account {{ s.actual_account }} syncs, so choose carefully, or leave it as it is.</div>
       {% endif %}
     </div>
     {% endfor %}
-    <div style="font-size:11px; color:#4a5568; margin:0.5rem 0 1rem;">Each bank account can only be linked to one Bridge Bank account. Anything left unselected keeps its current connection and may stop syncing.</div>
+    <div style="font-size:11px; color:var(--muted); margin:0.5rem 0 1rem;">Each bank account can only be linked to one Bridge Bank account. Anything left unselected keeps its current connection and may stop syncing.</div>
     <button class="btn btn-primary" type="submit">{% if rebinding %}Re-bind accounts{% else %}Reconnect accounts{% endif %} &rarr;</button>
   </form>
 </div>
@@ -47,20 +47,20 @@
     <input type="hidden" name="session_id" value="{{ picker_session_id }}">
     <input type="hidden" name="multi_mode" value="1">
     {% for acct in accounts %}
-    <div style="padding:14px 16px; border:1px solid #253450; border-radius:8px; margin-bottom:0.5rem;">
+    <div style="padding:14px 16px; border:1px solid var(--line); border-radius:8px; margin-bottom:0.5rem;">
       <label style="display:flex; align-items:center; gap:12px; cursor:pointer;">
         <input type="checkbox" name="account_uid" value="{{ acct._uid }}" {% if loop.first %}checked{% endif %} style="accent-color:#3b82f6; flex-shrink:0; width:18px; height:18px;">
         <div style="flex:1; min-width:0;">
-          <div style="font-size:14px; font-weight:600; color:#e8edf5;">{{ acct._label }}</div>
-          {% if acct.details %}<div style="font-size:12px; color:#94a3b8;">{{ acct.details }}</div>{% elif acct.owner_name %}<div style="font-size:12px; color:#94a3b8;">{{ acct.owner_name }}</div>{% endif %}
-          {% if acct.currency %}<div style="font-size:11px; color:#4a5568;">{{ acct.currency }}</div>{% endif %}
+          <div style="font-size:14px; font-weight:600; color:var(--text);">{{ acct._label }}</div>
+          {% if acct.details %}<div style="font-size:12px; color:var(--text-2);">{{ acct.details }}</div>{% elif acct.owner_name %}<div style="font-size:12px; color:var(--text-2);">{{ acct.owner_name }}</div>{% endif %}
+          {% if acct.currency %}<div style="font-size:11px; color:var(--muted);">{{ acct.currency }}</div>{% endif %}
         </div>
       </label>
       <input type="text" name="actual_{{ acct._uid }}" list="actual-accounts" autocomplete="off" placeholder="Actual Budget account name" value="{% if loop.first %}{{ default_actual }}{% endif %}" style="width:100%; font-size:13px; padding:8px 10px; margin-top:10px;">
     </div>
     {% endfor %}
     <datalist id="actual-accounts"></datalist>
-    <div style="font-size:11px; color:#4a5568; margin:0.5rem 0 1rem;">Each account syncs into its own account in Actual Budget, and each one uses a bank slot from your license.</div>
+    <div style="font-size:11px; color:var(--muted); margin:0.5rem 0 1rem;">Each account syncs into its own account in Actual Budget, and each one uses a bank slot from your license.</div>
     <button class="btn btn-primary" type="submit">{% if accounts|length == 1 %}Connect this account{% else %}Connect selected accounts{% endif %} &rarr;</button>
   </form>
 </div>
@@ -82,14 +82,14 @@ fetch('/api/actual-accounts').then(function (r) { return r.json(); }).then(funct
   <form method="POST">
     <input type="hidden" name="session_id" value="{{ picker_session_id }}">
     {% for acct in accounts %}
-    <label style="display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid #253450; border-radius:8px; margin-bottom:0.5rem; cursor:pointer; transition: border-color 0.15s;">
+    <label style="display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid var(--line); border-radius:8px; margin-bottom:0.5rem; cursor:pointer; transition: border-color 0.15s;">
       <input type="radio" name="account_uid" value="{{ acct.uid or acct.account_uid or acct.resource_id }}" {% if loop.first %}checked{% endif %} style="accent-color:#3b82f6; flex-shrink:0; width:18px; height:18px;">
       <div style="flex:1; min-width:0;">
-        <div style="font-size:14px; font-weight:600; color:#e8edf5;">
+        <div style="font-size:14px; font-weight:600; color:var(--text);">
           {% if acct.iban %}{{ acct.iban[:4] }} •••• {{ acct.iban[-4:] }}{% elif acct.account_name %}{{ acct.account_name }}{% else %}Account {{ loop.index }}{% endif %}
         </div>
-        {% if acct.details %}<div style="font-size:12px; color:#94a3b8;">{{ acct.details }}</div>{% elif acct.owner_name %}<div style="font-size:12px; color:#94a3b8;">{{ acct.owner_name }}</div>{% endif %}
-        {% if acct.currency %}<div style="font-size:11px; color:#4a5568;">{{ acct.currency }}</div>{% endif %}
+        {% if acct.details %}<div style="font-size:12px; color:var(--text-2);">{{ acct.details }}</div>{% elif acct.owner_name %}<div style="font-size:12px; color:var(--text-2);">{{ acct.owner_name }}</div>{% endif %}
+        {% if acct.currency %}<div style="font-size:11px; color:var(--muted);">{{ acct.currency }}</div>{% endif %}
       </div>
     </label>
     {% endfor %}
