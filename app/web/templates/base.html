@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#071330">
+  <meta name="theme-color" content="#08112a">
   <title>{% block title %}Bridge Bank{% endblock %}</title>
   <link rel="icon" type="image/png" href="/static/da.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css?v={{ app_version }}">
 </head>
 <body class="has-sidebar page-{{ active or 'app' }}">
@@ -18,19 +17,18 @@
         <img src="/static/da.png" alt="">
         <span class="logo-name">Bridge Bank</span>
       </a>
-      <div class="sidebar-label">Sheets</div>
       <nav class="sidebar-nav">
-        <a href="/setup" {% if active == 'license' %}class="active"{% endif %}><span class="num">01</span>License</a>
-        <a href="/setup/actual" {% if active == 'actual' %}class="active"{% endif %}><span class="num">02</span>Actual Budget</a>
-        <a href="/setup/notifications" {% if active == 'notifications' %}class="active"{% endif %}><span class="num">03</span>Notifications</a>
-        <a href="/bank" {% if active == 'bank' %}class="active"{% endif %}><span class="num">04</span>Banks</a>
-        <a href="/status" {% if active in ('status', 'sync') %}class="active"{% endif %}><span class="num">05</span>Status{% if nav_health %}<span class="health-dot {{ 'bad' if nav_health == 'bad' }}" title="{{ 'An account failed on the last sync' if nav_health == 'bad' else 'Last sync went fine' }}"></span>{% endif %}</a>
+        <a href="/setup" {% if active == 'license' %}class="active"{% endif %}>License</a>
+        <a href="/setup/actual" {% if active == 'actual' %}class="active"{% endif %}>Actual Budget</a>
+        <a href="/setup/notifications" {% if active == 'notifications' %}class="active"{% endif %}>Notifications</a>
+        <a href="/bank" {% if active == 'bank' %}class="active"{% endif %}>Bank</a>
+        <a href="/status" {% if active == 'status' %}class="active"{% endif %}>Status{% if nav_health %}<span class="health-dot {{ 'bad' if nav_health == 'bad' }}" title="{{ 'An account failed on the last sync' if nav_health == 'bad' else 'Last sync went fine' }}"></span>{% endif %}</a>
       </nav>
       <div class="sidebar-footer">
         <a href="mailto:support@david-alves.com">Support</a>
-        <a href="https://bridgebank.app/privacy" target="_blank" rel="noopener">Privacy</a>
-        <a href="https://bridgebank.app/terms" target="_blank" rel="noopener">Terms</a>
-        <a href="https://github.com/DAdjadj/bridge-bank" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://bridgebank.app/privacy" target="_blank">Privacy</a>
+        <a href="https://bridgebank.app/terms" target="_blank">Terms</a>
+        <a href="https://github.com/DAdjadj/bridge-bank" target="_blank">GitHub</a>
         <span class="ver">v{{ app_version }}</span>
       </div>
     </aside>

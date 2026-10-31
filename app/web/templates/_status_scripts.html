@@ -1,0 +1,149 @@
+<script>
+async function downloadLogs() {
+  var btn = document.getElementById('download-logs-btn');
+  btn.textContent = 'Fetching...';
+  btn.disabled = true;
+  try {
+    var resp = await fetch('/api/logs?lines=500');
+    var data = await resp.json();
+    if (data.logs) {
+      var blob = new Blob([data.logs], { type: 'text/plain' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      var now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = 'bridge-bank-logs-' + now + '-' + (data.version || 'unknown') + '.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }
+  } catch(e) {}
+  btn.textContent = 'Download logs';
+  btn.disabled = false;
+}
+
+async function runUpdate() {
+  const btn = document.getElementById('update-btn');
+  const status = document.getElementById('update-status');
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.textContent = 'Checking for updates...';
+  try {
+    const check = await fetch('/update/check');
+    const checkData = await check.json();
+    if (!checkData.available) {
+      // latest is null when the check itself failed (e.g. no network) —
+      // don't claim "up to date" in that case.
+      status.textContent = checkData.latest
+        ? 'Already up to date (v' + checkData.latest + ').'
+        : 'Could not check for updates. Please try again later.';
+      btn.textContent = 'Check for updates';
+      btn.disabled = false;
+      setTimeout(function() { status.style.display = 'none'; }, 5000);
+      return;
+    }
+    status.textContent = 'Update found. Installing...';
+    const resp = await fetch('/update/run', { method: 'POST' });
+    const data = await resp.json();
+    if (data.updating) {
+      status.textContent = 'Restarting...';
+      setTimeout(function pollServer() {
+        fetch('/health').then(function(r) { if (r.ok) location.reload(); else setTimeout(pollServer, 2000); }).catch(function() { setTimeout(pollServer, 2000); });
+      }, 5000);
+    } else if (data.error) {
+      status.textContent = data.error;
+      btn.textContent = 'Check for updates';
+      btn.disabled = false;
+    }
+  } catch(e) {
+    status.textContent = 'Update may be in progress. Refreshing...';
+    setTimeout(function pollServer() {
+      fetch('/health').then(function(r) { if (r.ok) location.reload(); else setTimeout(pollServer, 2000); }).catch(function() { setTimeout(pollServer, 2000); });
+    }, 3000);
+  }
+}
+
+function setUpdateButton(available) {
+  var btn = document.getElementById('update-btn');
+  if (!btn) return;
+  btn.textContent = available ? 'Update available' : 'Check for updates';
+  btn.classList.toggle('btn-green', !!available);
+}
+
+// Check for updates on page load
+fetch('/update/check').then(function(r) { return r.json(); }).then(function(d) {
+  setUpdateButton(!!d.available);
+}).catch(function() {});
+
+async function runSync() {
+  const btn = document.getElementById('sync-btn');
+  btn.querySelector('span').textContent = 'Syncing...';
+  btn.classList.add('is-busy');
+  btn.disabled = true;
+  try {
+    await fetch('/sync/now', { method: 'POST' });
+    var attempts = 0;
+    var poll = setInterval(function() {
+      attempts++;
+      fetch('/api/sync-status').then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.running && attempts > 1) {
+          clearInterval(poll);
+          location.reload();
+        }
+      }).catch(function() {
+        if (attempts > 60) {
+          clearInterval(poll);
+          location.reload();
+        }
+      });
+    }, 2000);
+  } catch(e) {
+    btn.querySelector('span').textContent = 'Error — try again';
+    btn.classList.remove('is-busy');
+    btn.disabled = false;
+  }
+}
+document.querySelectorAll('.utc-time').forEach(function(el) {
+  var raw = el.textContent.trim();
+  if (!raw || raw === 'Never') return;
+  var d = new Date(raw + 'Z');
+  if (isNaN(d)) return;
+  el.textContent = d.toLocaleString('en-GB', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+});
+document.querySelectorAll('.utc-short').forEach(function(el) {
+  var d = new Date(el.textContent.trim() + 'Z');
+  if (isNaN(d)) return;
+  var day = d.toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+  var time = d.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', hour12:false});
+  el.textContent = day + ', ' + time;
+});
+document.querySelectorAll('[data-expand]').forEach(function(el) {
+  el.addEventListener('click', function() { el.classList.toggle('open'); });
+});
+// Schedule: times preview, and the start time hides for manual syncing
+(function() {
+  var f = document.getElementById('sync_frequency');
+  if (!f) return;
+  function updateSyncPreview() {
+    var freq = parseInt(f.value);
+    var wrap = document.getElementById('start-time-wrap');
+    var preview = document.getElementById('sync-times-preview');
+    wrap.hidden = (freq === 0);
+    if (freq === 0) { preview.textContent = ''; return; }
+    var time = document.getElementById('sync_time').value;
+    if (!time) { preview.textContent = ''; return; }
+    var parts = time.split(':');
+    var h = parseInt(parts[0]), m = parseInt(parts[1]);
+    var times = [];
+    for (var i = 0; i < 24; i += freq) {
+      var th = (h + i) % 24;
+      times.push((th < 10 ? '0' : '') + th + ':' + (m < 10 ? '0' : '') + m);
+    }
+    preview.textContent = 'Syncs at ' + times.join(', ');
+  }
+  f.addEventListener('change', updateSyncPreview);
+  document.getElementById('sync_time').addEventListener('input', updateSyncPreview);
+  updateSyncPreview();
+})();
+</script>

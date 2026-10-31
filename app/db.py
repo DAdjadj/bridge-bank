@@ -170,16 +170,6 @@ def get_recent_syncs(limit: int = 15) -> list:
         ).fetchall()
         return [dict(r) for r in rows]
 
-def get_syncs_since(since: str, limit: int = 20000) -> list:
-    """Sync log rows from `since` (UTC, 'YYYY-MM-DD HH:MM:SS') on, newest first."""
-    with _conn() as conn:
-        _ensure_tables(conn)
-        rows = conn.execute(
-            "SELECT ran_at, status, tx_count, message FROM sync_log WHERE ran_at >= ? ORDER BY id DESC LIMIT ?",
-            (since, limit)
-        ).fetchall()
-        return [dict(r) for r in rows]
-
 def get_sync_log_page(page: int = 1, per_page: int = 5) -> dict:
     with _conn() as conn:
         _ensure_tables(conn)

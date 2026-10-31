@@ -1,460 +1,147 @@
 {% extends "base.html" %}
-{% block title %}Status · Bridge Bank{% endblock %}
+{% block title %}Status — Bridge Bank{% endblock %}
+{% block steps %}
+<div class="steps">
+  <div class="step done"></div>
+  <div class="step done"></div>
+  <div class="step done"></div>
+  <div class="step done"></div>
+  <div class="step done"></div>
+</div>
+{% endblock %}
 {% block content %}
-{% set ov = overview %}
-{% set n_acc = lanes|length %}
+{% include "_status_notices.html" %}
+{% set state = 'bad' if last_run_failures else ('ok' if last_sync else 'none') %}
 
-{% if is_trial and trial_expires_at %}
-  <div class="alert alert-warn">You are on a free trial until {{ trial_until or trial_expires_at }}. <a href="https://buy.stripe.com/aFabIU2ce8ntbuDeYVcMM03" target="_blank" rel="noopener">Buy a license &rarr;</a></div>
-{% endif %}
-
-{% if license_sync_failed %}
-  {% if license_limit_reached %}
-    <div class="alert alert-error">Your license is inactive and syncing has stopped. <a href="/setup">Manage your license &rarr;</a></div>
-  {% else %}
-    <div class="alert alert-warn">Your license is not activated on this machine. <a href="/setup">Re-enter your license key &rarr;</a></div>
-  {% endif %}
-{% endif %}
-
-{% include "_picker_banner.html" %}
-
-{% if bank_seat_error %}
-  <div class="alert alert-error">{{ bank_seat_error }} <a href="/bank">Manage banks &rarr;</a></div>
-{% endif %}
-
-{% if days_left is not none and days_left <= 14 %}
-  <div class="alert alert-warn">A bank connection expires in {{ days_left }} day{{ 's' if days_left != 1 else '' }}. <a href="/bank">Re-authorize it &rarr;</a></div>
-{% endif %}
-
-{% if last_run_failures %}
-  <div class="alert alert-error">
-    <strong>Some accounts could not sync on the last run.</strong> They will keep failing until fixed (a bank often just needs re-authorizing):
-    <ul style="margin:8px 0 6px;padding-left:18px;">
-      {% for m in last_run_failures %}<li style="margin-bottom:2px;">{{ m }}</li>{% endfor %}
-    </ul>
-    <a href="/bank">Manage banks &rarr;</a>
-  </div>
-{% endif %}
-
-{% if show_budget_notice %}
-<section class="card notice" id="budget-notice">
-  <div class="notice-body">
-    <div class="kicker">New from Bridge Bank</div>
-    <div class="notice-title">Bridge Budget is here</div>
-    <p class="notice-text">YNAB-style budgeting on your own Actual server: targets for every category, fund what's short in one click, clear reports, and a budget that works on your phone. Bridge Bank keeps bringing the transactions in.</p>
-    <div class="notice-acts">
-      <a class="btn btn-sm notice-go" href="https://bridgebank.app/budget?ref=bridge-bank-app" target="_blank" rel="noopener" onclick="hideBudgetNotice()">See Bridge Budget &rarr;</a>
-      <a href="#" class="quiet-link" onclick="event.preventDefault();hideBudgetNotice();">Don't show again</a>
-    </div>
-  </div>
-  <button type="button" class="notice-close" aria-label="Close" onclick="hideBudgetNotice()">&times;</button>
-</section>
-<script>
-function hideBudgetNotice() {
-  fetch('/budget-notice/dismiss', {method: 'POST'});
-  var el = document.getElementById('budget-notice');
-  if (el) el.remove();
-}
-</script>
-{% endif %}
-
-{% if show_review_prompt %}
-<section class="card notice">
-  <div class="notice-body">
-    <div class="notice-title">How's Bridge Bank working for you?</div>
-    <p class="notice-text">Your feedback helps other people find Bridge Bank.</p>
-    <form method="POST" action="/review/submit" id="review-form">
-      <div id="star-rating" class="stars">
-        <span class="review-star" data-val="1">&#9734;</span>
-        <span class="review-star" data-val="2">&#9734;</span>
-        <span class="review-star" data-val="3">&#9734;</span>
-        <span class="review-star" data-val="4">&#9734;</span>
-        <span class="review-star" data-val="5">&#9734;</span>
-      </div>
-      <input type="hidden" name="rating" id="review-rating" value="" required>
-      <textarea name="review" placeholder="What do you like about Bridge Bank? Anything we could improve?" rows="3" required style="resize:vertical;margin-bottom:10px;"></textarea>
-      <input type="text" name="name" placeholder="Your name (optional)" style="margin-bottom:14px;">
-      <div class="notice-acts">
-        <button type="submit" class="btn btn-sm notice-go" id="review-submit-btn" disabled>Submit review</button>
-        <a href="/review/dismiss" class="quiet-link" onclick="event.preventDefault();fetch('/review/dismiss',{method:'POST'}).then(()=>location.reload());">Maybe later</a>
-      </div>
-    </form>
-  </div>
-</section>
-<script>
-(function() {
-  var stars = document.querySelectorAll('.review-star');
-  var ratingInput = document.getElementById('review-rating');
-  var submitBtn = document.getElementById('review-submit-btn');
-  var currentRating = 0;
-  function setStars(n) {
-    stars.forEach(function(s, i) {
-      s.innerHTML = (i < n) ? '&#9733;' : '&#9734;';
-      s.classList.toggle('on', i < n);
-    });
-  }
-  stars.forEach(function(star) {
-    star.addEventListener('click', function() {
-      currentRating = parseInt(this.dataset.val);
-      ratingInput.value = currentRating;
-      setStars(currentRating);
-      submitBtn.disabled = false;
-    });
-    star.addEventListener('mouseenter', function() { setStars(parseInt(this.dataset.val)); });
-    star.addEventListener('mouseleave', function() { setStars(currentRating); });
-  });
-  setStars(0);
-})();
-</script>
-{% endif %}
-
-<div class="status-sheet">
-
-  {# ---------- Headline ---------- #}
-  <header class="st-head">
-    <div class="st-head-text">
-      <div class="kicker"><span>05</span><span>Status</span></div>
-      {% if ov.state == 'none' %}
-        <h1>No syncs yet.</h1>
-        <p class="lead">{% if schedule %}The first sync runs at <b>{{ schedule.next }}</b>{% if schedule.next_day %} tomorrow{% endif %}, in {{ schedule.next_in }}. Or press Sync now.{% else %}Press Sync now to bring in your transactions.{% endif %}</p>
-      {% elif ov.state == 'ok' %}
-        <h1>Everything synced <em>{{ ov.at_ok }}.</em></h1>
-        <p class="lead">{% if n_acc == 1 %}Your account synced without a problem.{% elif n_acc == 2 %}Both accounts synced without a problem.{% else %}All {{ n_acc }} accounts synced without a problem.{% endif %}
-          {% if schedule %}Next sync <b>{{ schedule.next }}</b>{% if schedule.next_day %} tomorrow{% endif %}, in {{ schedule.next_in }}.{% else %}Syncing is manual: press Sync now for new transactions.{% endif %}</p>
-      {% elif ov.state == 'fail' %}
-        <h1 class="is-bad">The last sync failed <em>{{ ov.at_fail }}.</em></h1>
-        <p class="lead">{% if n_acc == 1 %}Your account{% else %}None of your accounts{% endif %} synced. The reason is in the red box above and in the log below.
-          {% if schedule %}It will try again at <b>{{ schedule.next }}</b>.{% endif %}</p>
-      {% else %}
-        <h1 class="is-bad">{{ ov.failed|length }} of {{ n_acc }} accounts didn't sync <em>{{ ov.at_fail }}.</em></h1>
-        <p class="lead">{% for l in ov.failed %}<b>{{ l.bank }} &rarr; {{ l.dest }}</b>{% if not loop.last %}{{ ', ' if not loop.revindex == 2 else ' and ' }}{% endif %}{% endfor %} failed; the other {{ ov.ok_count }} synced fine.
-          {% if schedule %}Next try <b>{{ schedule.next }}</b>, in {{ schedule.next_in }}.{% endif %}</p>
-      {% endif %}
-    </div>
-    <div class="st-acts">
-      <button class="btn btn-accent" id="sync-btn" onclick="runSync()">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16m0 5v-5h5M3 12a9 9 0 0 1 15.5-6.2L21 8m0-5v5h-5"/></svg>
-        <span>Sync now</span>
-      </button>
-      <a class="btn" href="/bank">Manage banks</a>
-    </div>
-  </header>
-
-  {# ---------- The drawing ---------- #}
-  <div class="drawing" role="img" aria-label="A bridge from your banks to Actual Budget{% if ov.time_newest %}, last crossed at {{ ov.time_newest }}{% endif %}">
-    <svg viewBox="0 0 1200 270" preserveAspectRatio="none" aria-hidden="true">
-      <path class="w" d="M0 246H1200M0 262H1200"/>
-      <path class="s2" d="M236 232H964M236 225v14M964 225v14"/>
-      <path d="M236 232l9-4v8zM964 232l-9-4v8z" class="arrowhead"/>
-      <rect class="pier" x="204" y="210" width="32" height="60"/>
-      <rect class="pier" x="964" y="210" width="32" height="60"/>
-      <path class="s" d="M0 200H1200M0 210H1200"/>
-      <path class="s2" d="M0 205H1200" stroke-dasharray="2 8"/>
-      <path class="s" d="M211 36V200M229 36V200M991 36V200M971 36V200"/>
-      <path class="s2" d="M211 36H229M211 84H229M211 136H229M211 84L229 136M229 84L211 136M971 36H991M971 84H991M971 136H991M971 84L991 136M991 84L971 136"/>
-      <path class="s2 hang" d="M258 63.7V200M296 88.6V200M334 110.5V200M372 129.4V200M410 145.5V200M448 158.6V200M486 168.9V200M524 176.2V200M562 180.5V200M600 182.0V200M638 180.5V200M676 176.2V200M714 168.9V200M752 158.6V200M790 145.5V200M828 129.4V200M866 110.5V200M904 88.6V200M942 63.7V200M44 187.7V200M1156 187.7V200M88 171.2V200M1112 171.2V200M132 145.7V200M1068 145.7V200M176 105.7V200M1024 105.7V200"/>
-      <path class="s draw" d="M0 198Q160 170 220 36Q600 328 980 36Q1040 170 1200 198"/>
-      <g class="wide-only">
-        <path class="s2" d="M229 36L262 14H292"/>
-        <path class="s2" d="M971 36L938 14H908"/>
-        {% if streak > 1 %}<path class="s2" d="M600 182V122"/><circle cx="600" cy="182" r="3" class="dotmark"/>{% endif %}
-      </g>
+<div class="ov">
+  <section class="hero {{ state }} rise">
+    <svg class="bridge-art" viewBox="0 0 600 160" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 132H600"/><path d="M150 30V132M450 30V132"/>
+      <path d="M0 128Q110 112 150 30Q300 170 450 30Q490 112 600 128"/>
+      <path d="M190 60V132M230 82V132M270 95V132M300 100V132M330 95V132M370 82V132M410 60V132M60 118V132M100 100V132M500 100V132M540 118V132"/>
     </svg>
-    <div class="ann ann-tl wide-only">
-      {% if ov.state == 'none' %}NO SYNCS YET
-      {% else %}LAST SYNC {{ ov.time_newest }} &middot; {% if ov.failed %}<span class="bad">{{ ov.failed|length }} FAILED</span>{% elif n_acc == 1 %}<span class="good">OK</span>{% else %}<span class="good">ALL {{ n_acc }} OK</span>{% endif %}{% endif %}
-    </div>
-    <div class="ann ann-tr wide-only">{% if schedule %}NEXT {{ schedule.next }} &middot; IN {{ schedule.next_in|upper }}{% else %}MANUAL SYNCS ONLY{% endif %}</div>
-    {% if streak > 1 %}<div class="ann ann-mid wide-only good">{{ streak }} SYNCS IN A ROW</div>{% endif %}
-    <div class="ann ann-dim">{% if schedule %}EVERY {{ schedule.every }} HOURS<span class="wide-only"> &middot; {{ schedule.times|join(' ') }}</span>{% else %}WHEN YOU PRESS SYNC NOW{% endif %}</div>
-    <div class="ann ann-l hi">YOUR BANK{{ 'S' if n_acc != 1 }} &middot; {{ n_acc }}</div>
-    <div class="ann ann-r hi">ACTUAL BUDGET</div>
-    <div class="chip{% if ov.failed %} chip-bad{% endif %}{% if not ov.run_time %} chip-idle{% endif %}" id="bridge-chip">
-      {% if ov.run_time %}<span>{{ ov.run_time }}</span>{% if ov.failed %}<b class="bad">{{ ov.failed|length }} failed</b>{% elif ov.run_new %}<b>+{{ ov.run_new }} new</b>{% else %}<b class="z">nothing new</b>{% endif %}{% else %}<span>waiting for the first sync</span>{% endif %}
-    </div>
-  </div>
-  <div class="drawing-notes">
-    <span>{% if ov.state == 'none' %}No syncs yet{% else %}Last sync {{ ov.time_newest }} &middot; {% if ov.failed %}<b class="bad">{{ ov.failed|length }} failed</b>{% else %}<b class="good">all OK</b>{% endif %}{% endif %}</span>
-    <span>{% if schedule %}Next {{ schedule.next }}, in {{ schedule.next_in }}{% else %}Manual syncs only{% endif %}</span>
-    {% if streak > 1 %}<span class="good">{{ streak }} in a row</span>{% endif %}
-  </div>
-
-  {# ---------- Accounts ---------- #}
-  <section class="panel lanes-panel">
-    <h4 class="panel-h">Connected accounts <span>{{ bank_seat_usage }} of {{ bank_account_limit }} bank slots</span></h4>
-    <div class="lanes">
-      {% for l in lanes %}
-      {% set bad = l.last and not l.last.ok %}
-      <div class="lane{% if bad %} is-bad{% endif %}">
-        <div class="lane-bank"><b title="{{ l.bank }}">{{ l.bank }}</b>{% if l.sub %}<small>{{ l.sub }}</small>{% endif %}</div>
-        <div class="lane-dest"><small>In Actual</small><b title="{{ l.dest }}">{{ l.dest }}</b></div>
-        <div class="squares" role="img" aria-label="Last 30 days: {{ l.total }} new transaction{{ 's' if l.total != 1 }}">
-          {% for c in l.cells %}<i class="q{{ c.level }}{% if c.fail %} f{% endif %}{% if c.today %} t{% endif %}" title="{{ c.tip }}"></i>{% endfor %}
-        </div>
-        <div class="lane-last">
-          {% if not l.last %}<span class="muted">Not synced yet</span>
-          {% elif l.last.ok %}<span class="good">&check;</span> {% if l.last.when != 'today' %}{{ l.last.when }} {% endif %}{{ l.last.time }} &middot; {% if l.last.tx %}+{{ l.last.tx }}{% else %}nothing new{% endif %}
-          {% else %}<span class="bad">&times; {% if l.last.when != 'today' %}{{ l.last.when }} {% endif %}{{ l.last.time }} &middot; failed</span>{% endif %}
-          {% if l.last %}<small>{{ l.total }} in 30 days</small>{% endif %}
-        </div>
-        <div class="lane-auth {{ l.auth.level or '' }}">
-          <span>{{ l.auth.text }}</span>
-          {% if l.auth.kind == 'days' %}
-            <div class="bar"><i style="width:{{ l.auth.pct }}%"></i></div>
-            {% if l.auth.level == 'ok' %}<small>Re-authorize by {{ l.auth.until }}</small>{% else %}<small><a href="/bank">Re-authorize now &rarr;</a></small>{% endif %}
-          {% else %}
-            <div class="bar bar-none"></div><small>{{ l.auth.note }}</small>
-          {% endif %}
-        </div>
+    <div class="hero-main">
+      <div class="badge-ic">
+        {% if state == 'ok' %}<svg viewBox="0 0 24 24"><path class="draw" d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+        {% elif state == 'bad' %}<svg viewBox="0 0 24 24"><path d="M12 7v6M12 17h.01"/></svg>
+        {% else %}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>{% endif %}
       </div>
-      {% endfor %}
-      {% if lanes %}
-      <div class="lane lane-axis" aria-hidden="true"><div class="axis">{% for a in ov.axis %}<em>{{ a }}</em>{% endfor %}</div></div>
-      {% endif %}
-      {% set free = (bank_account_limit|int) - (bank_seat_usage|int) %}
-      <div class="lane lane-add">
-        <span>{% if free > 1 %}{{ free }} bank slots free.{% elif free == 1 %}One bank slot free.{% else %}All bank slots in use.{% endif %}</span>
-        <a href="/bank">{% if free > 0 %}Connect another bank{% else %}Manage banks{% endif %} &rarr;</a>
+      <div>
+        <div class="hero-kicker">Status</div>
+        <h1>{% if state == 'ok' %}All synced{% elif state == 'bad' %}Needs attention{% else %}Not synced yet{% endif %}</h1>
+        <p>{{ fun_message }}</p>
       </div>
     </div>
-    <div class="squares-key">
-      <span><i class="q0"></i>Nothing new</span>
-      <span><i class="q3"></i>New transactions</span>
-      <span><i class="q0 f"></i>A sync failed that day</span>
-      <span class="key-note">Each square is a day; hover one for its numbers.</span>
+    <div class="hero-side">
+      <div class="hero-last"><span>Last sync</span><b class="utc-time">{{ last_sync or 'Never' }}</b></div>
+      <button class="btn btn-accent sync-btn" id="sync-btn" onclick="runSync()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16m0 5v-5h5M3 12a9 9 0 0 1 15.5-6.2L21 8m0-5v5h-5"/></svg><span>Sync now</span></button>
     </div>
   </section>
 
-  {# ---------- Log, schedule, title block ---------- #}
-  <div class="st-row">
-    <section class="panel st-log">
-      <h4 class="panel-h">Sync log <span>{% if timezone %}{{ timezone.split('/')[-1].replace('_', ' ') }} time{% endif %}</span></h4>
-      {% if log_entries %}
-      <div class="log">
-        {% for e in log_entries %}
-          {% if e.head %}
-            <div class="log-head">{{ e.head }}</div>
-          {% elif e.ok %}
-            <div class="log-row"><i>{{ e.time }}</i><span>{{ e.label }}</span><b class="{{ 'new' if e.tx }}">{{ '+' ~ e.tx if e.tx else '0' }}</b></div>
-          {% else %}
-            <details class="log-row-fail">
-              <summary><i>{{ e.time }}</i><span>{{ e.label }}</span><b>failed</b></summary>
-              <p>{{ e.detail or 'No details were logged.' }}</p>
-            </details>
-          {% endif %}
-        {% endfor %}
-      </div>
-      <div class="log-foot">
-        <span class="pages">
-          {% if page > 1 %}<a href="?page={{ page - 1 }}" aria-label="Newer">&larr;</a>{% endif %}
-          {{ page }} / {{ total_pages }}
-          {% if page < total_pages %}<a href="?page={{ page + 1 }}" aria-label="Older">&rarr;</a>{% endif %}
-        </span>
-        <form method="POST" action="/sync/clear" onsubmit="return confirm('Clear the whole sync log?');">
-          <button type="submit" class="text-btn">Clear log</button>
-        </form>
-      </div>
-      {% else %}
-      <p class="empty">Nothing here yet. Press Sync now or wait for the scheduled sync.</p>
-      {% endif %}
-    </section>
+  <section class="tiles">
+    {% if total_tx >= 0 %}
+    <div class="tile t-blue rise" style="--d:60ms"><div class="tile-top"><span>Transactions synced</span><i class="chip c-blue"><svg viewBox="0 0 24 24"><path d="M8 3L4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></svg></i></div>
+      <b data-count="{{ total_tx }}">{{ '{:,}'.format(total_tx) }}</b></div>
+    {% endif %}
+    {% if streak > 0 %}
+    <div class="tile t-green rise" style="--d:110ms"><div class="tile-top"><span>Sync streak</span><i class="chip c-green"><svg viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></i></div>
+      <b class="good"><span data-count="{{ streak }}">{{ streak }}</span><small>in a row</small></b></div>
+    {% endif %}
+    <div class="tile t-violet rise" style="--d:160ms"><div class="tile-top"><span>Bank slots</span><i class="chip c-violet"><svg viewBox="0 0 24 24"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 14v3M12 14v3M16 14v3"/></svg></i></div>
+      <b>{{ bank_seat_usage }}<small>/ {{ bank_account_limit }}</small></b>
+      <div class="slots">{% for i in range(bank_account_limit|int) %}<i class="{{ 'on' if i < bank_seat_usage|int }}"></i>{% endfor %}</div></div>
+    <div class="tile t-amber rise" style="--d:210ms"><div class="tile-top"><span>Notifications</span><i class="chip c-amber"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></i></div>
+      <b class="email" title="{{ notify_email or 'Disabled' }}">{{ notify_email or 'Disabled' }}</b></div>
+  </section>
 
-    <section class="panel st-schedule">
-      <h4 class="panel-h">Schedule <span id="next-label">{% if schedule %}Next {{ schedule.next }}{% else %}Manual{% endif %}</span></h4>
-      <form method="POST" action="/setup/sync" id="sync-form">
-        <div class="seg" role="radiogroup" aria-label="How often to sync">
-          {% for v, t in [('0', 'Manual'), ('6', '6 h'), ('12', '12 h'), ('24', '24 h')] %}
-          <label><input type="radio" name="sync_frequency" value="{{ v }}" {% if sync_frequency == v %}checked{% endif %}><span>{{ t }}</span></label>
+  <div class="cols">
+    <div class="stack">
+      <section class="cardx rise" style="--d:260ms">
+        <div class="card-head"><h2><i class="chip c-green"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></i>Sync log</h2>
+          <form method="POST" action="/sync/clear" onsubmit="return confirm('Clear all sync logs?');"><button type="submit" class="text-btn">Clear log</button></form>
+        </div>
+        {% if syncs %}
+        <ul class="log-list">
+          {% for s in syncs %}
+          <li class="{{ 'ok' if s.status == 'success' else 'fail' }}">
+            <span class="ic" title="{{ s.status }}">{% if s.status == 'success' %}<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>{% else %}<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>{% endif %}</span>
+            <span class="note" data-expand title="{{ s.message or '—' }}">{{ s.message or '—' }}</span>
+            <span class="tx {{ 'has' if s.tx_count }}">{{ s.tx_count }} transaction{{ 's' if s.tx_count != 1 }}</span>
+            <time class="utc-short">{{ s.ran_at }}</time>
+          </li>
           {% endfor %}
+        </ul>
+        {% if total_pages > 1 %}
+        <div class="pager">
+          {% if page > 1 %}<a href="?page={{ page - 1 }}" aria-label="Newer">&larr;</a>{% endif %}
+          <span>{{ page }} / {{ total_pages }}</span>
+          {% if page < total_pages %}<a href="?page={{ page + 1 }}" aria-label="Older">&rarr;</a>{% endif %}
         </div>
-        <div class="field" id="start-time-wrap" {% if sync_frequency == "0" %}hidden{% endif %}>
-          <span>First sync of the day</span>
-          <input type="text" id="sync_time" name="sync_time" value="{{ sync_time }}" pattern="[0-2][0-9]:[0-5][0-9]" placeholder="HH:MM" maxlength="5" inputmode="numeric" class="time-input" aria-label="First sync of the day">
+        {% endif %}
+        {% else %}
+        <div class="empty">No syncs yet.<br>Click "Sync now" above or wait for the scheduled sync.</div>
+        {% endif %}
+      </section>
+
+      <section class="cardx rise" style="--d:320ms">
+        <div class="card-head"><h2><i class="chip c-violet"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zM12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></i>Actions</h2></div>
+        <div class="acts">
+          <a class="btn btn-accent" href="/bank">&larr; Manage banks</a>
+          <button class="btn{% if update_available %} btn-green{% endif %}" id="update-btn" onclick="runUpdate()">{% if update_available %}Update available{% else %}Check for updates{% endif %}</button>
+          <button class="btn" id="download-logs-btn" onclick="downloadLogs()">Download logs</button>
+          {% if activation_usage > 0 %}
+          <form method="POST" action="/settings/deactivate" onsubmit="return confirm('This will deactivate your license on this machine. You can re-enter your key to reactivate. Continue?');">
+            <button type="submit" class="text-btn danger">Deactivate license ({{ activation_usage }}/{{ activation_limit }})</button>
+          </form>
+          {% endif %}
         </div>
+        <div id="update-status" class="update-status" style="display:none;"></div>
+      </section>
+    </div>
+
+    <section class="cardx rise" style="--d:300ms">
+      <div class="card-head"><h2><i class="chip c-blue"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></i>Sync schedule</h2></div>
+      <form method="POST" action="/setup/sync" id="sync-form" class="sched">
+        <div class="set-row"><label for="sync_frequency">Frequency</label>
+          <select id="sync_frequency" name="sync_frequency">
+            <option value="0" {% if sync_frequency == "0" %}selected{% endif %}>Manual only</option>
+            <option value="6" {% if sync_frequency == "6" %}selected{% endif %}>Every 6 hours</option>
+            <option value="12" {% if sync_frequency == "12" %}selected{% endif %}>Every 12 hours</option>
+            <option value="24" {% if sync_frequency == "24" %}selected{% endif %}>Every 24 hours</option>
+          </select></div>
+        <div class="set-row" id="start-time-wrap" {% if sync_frequency == "0" %}hidden{% endif %}><label for="sync_time">Start time</label>
+          <input type="text" id="sync_time" name="sync_time" value="{{ sync_time }}" pattern="[0-2][0-9]:[0-5][0-9]" placeholder="HH:MM" maxlength="5" class="time"></div>
         <input type="hidden" name="auto_link_transfers" value="false">
-        <label class="field switch-field">
-          <span>Link transfers between my accounts<small>Pairs both sides in Actual</small></span>
-          <input type="checkbox" name="auto_link_transfers" value="true" class="switch-input" {% if auto_link_transfers %}checked{% endif %}><span class="switch" aria-hidden="true"></span>
-        </label>
+        <label class="set-row"><span>Auto-link internal transfers</span>
+          <input type="checkbox" name="auto_link_transfers" value="true" class="switch-input" {% if auto_link_transfers %}checked{% endif %}><span class="switch"></span></label>
         <input type="hidden" name="iban_in_notes" value="false">
-        <label class="field switch-field">
-          <span>Add the other account's IBAN to notes<small>New transactions end with "IBAN: NL91ABNA0417164300". Useful for your own scripts and rules.</small></span>
-          <input type="checkbox" name="iban_in_notes" value="true" class="switch-input" {% if iban_in_notes %}checked{% endif %}><span class="switch" aria-hidden="true"></span>
-        </label>
-        <div class="times" id="sync-times-preview" aria-live="polite"></div>
-        <button class="btn btn-sm save-btn" type="submit" id="save-btn">Save</button>
+        <label class="set-row"><span>Add the other account's IBAN to notes<small>New transactions end with "IBAN: NL91ABNA0417164300". Useful for your own scripts and rules.</small></span>
+          <input type="checkbox" name="iban_in_notes" value="true" class="switch-input" {% if iban_in_notes %}checked{% endif %}><span class="switch"></span></label>
+        <div class="sched-foot">
+          <span class="times" id="sync-times-preview">{% if sync_frequency != "0" %}Syncs at {{ sync_times }}{% if timezone %} ({{ timezone }}){% endif %}{% endif %}</span>
+          <button class="btn btn-sm" type="submit">Save</button>
+        </div>
       </form>
     </section>
-
-    <section class="panel tb">
-      <h4 class="panel-h tb-cap">Title block <span>this server</span></h4>
-      <div class="tb-cell"><small>Synced</small><b>{{ '{:,}'.format(total_tx) if total_tx >= 0 else '0' }}</b><span>transactions</span></div>
-      <div class="tb-cell"><small>Last 30 days</small><b>{{ '{:,}'.format(ov.tx_30) }}</b><span>transactions</span></div>
-      <div class="tb-cell full"><small>License</small><span>{% if is_trial %}Free trial{% if trial_until %} until {{ trial_until }}{% endif %}{% elif license_sync_failed %}<span class="bad">Not active</span>{% else %}Active on {{ activation_usage }} of {{ activation_limit }} machine{{ 's' if activation_limit != 1 }}{% endif %}</span></div>
-      <div class="tb-cell full"><small>Alerts to</small><span>{% if notify_email %}{{ notify_email }}{% else %}<a href="/setup/notifications">Off. Turn on &rarr;</a>{% endif %}</span></div>
-      <div class="tb-cell full"><small>Version</small><span>v{{ app_version }} <em id="version-state">{% if update_available %}&middot; update available{% endif %}</em></span></div>
-      <div class="tb-btns">
-        <button class="btn btn-sm{% if update_available %} btn-green{% endif %}" id="update-btn" onclick="runUpdate()">{% if update_available %}Update now{% else %}Check for updates{% endif %}</button>
-        <button class="btn btn-sm" id="download-logs-btn" onclick="downloadLogs()">Download logs</button>
-        {% if activation_usage > 0 %}
-        <form method="POST" action="/settings/deactivate" onsubmit="return confirm('This will deactivate your license on this machine. You can re-enter your key to reactivate. Continue?');">
-          <button type="submit" class="btn btn-sm btn-danger">Deactivate license</button>
-        </form>
-        {% endif %}
-      </div>
-      <div id="update-status" class="update-status" hidden></div>
-    </section>
   </div>
-
-  <p class="drawn-note">{{ fun_message }}</p>
 </div>
-
 <script>
-// Schedule: the times row follows the form, Save lights up when something changed.
+// Numbers count up once when the page opens.
 (function() {
-  var form = document.getElementById('sync-form');
-  var wrap = document.getElementById('start-time-wrap');
-  var preview = document.getElementById('sync-times-preview');
-  var timeInput = document.getElementById('sync_time');
-  var save = document.getElementById('save-btn');
-  var initial = new URLSearchParams(new FormData(form)).toString();
-  var nextTime = {{ (schedule.next if schedule else '')|tojson }};
-  function freq() { var r = form.querySelector('input[name=sync_frequency]:checked'); return r ? parseInt(r.value) : 24; }
-  function update() {
-    var f = freq();
-    wrap.hidden = (f === 0);
-    preview.innerHTML = '';
-    if (f > 0 && /^[0-2][0-9]:[0-5][0-9]$/.test(timeInput.value)) {
-      var p = timeInput.value.split(':'), h = parseInt(p[0]), m = p[1];
-      for (var i = 0; i < 24; i += f) {
-        var s = document.createElement('span');
-        var t = ((h + i) % 24 < 10 ? '0' : '') + ((h + i) % 24) + ':' + m;
-        s.textContent = t;
-        if (t === nextTime) s.className = 'next';
-        preview.appendChild(s);
-      }
-    } else if (f === 0) {
-      preview.textContent = 'Syncs only when you press Sync now.';
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  document.querySelectorAll('[data-count]').forEach(function(el) {
+    var end = parseInt(el.getAttribute('data-count'), 10);
+    if (!end || end < 2) return;
+    var start = performance.now(), dur = 900;
+    function tick(now) {
+      var t = Math.min(1, (now - start) / dur), v = Math.round(end * (1 - Math.pow(1 - t, 3)));
+      el.textContent = v.toLocaleString('en-US');
+      if (t < 1) requestAnimationFrame(tick);
     }
-    var dirty = new URLSearchParams(new FormData(form)).toString() !== initial;
-    save.classList.toggle('dirty', dirty);
-    save.textContent = dirty ? 'Save changes' : 'Saved';
-    save.disabled = !dirty;
-  }
-  form.addEventListener('input', update);
-  form.addEventListener('change', update);
-  update();
+    el.textContent = '0';
+    requestAnimationFrame(tick);
+  });
 })();
-
-async function downloadLogs() {
-  var btn = document.getElementById('download-logs-btn');
-  btn.textContent = 'Fetching...';
-  btn.disabled = true;
-  try {
-    var resp = await fetch('/api/logs?lines=500');
-    var data = await resp.json();
-    if (data.logs) {
-      var blob = new Blob([data.logs], { type: 'text/plain' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      var now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.download = 'bridge-bank-logs-' + now + '-' + (data.version || 'unknown') + '.txt';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    }
-  } catch(e) {}
-  btn.textContent = 'Download logs';
-  btn.disabled = false;
-}
-
-function setUpdateState(available) {
-  var btn = document.getElementById('update-btn');
-  var state = document.getElementById('version-state');
-  if (!btn) return;
-  btn.textContent = available ? 'Update now' : 'Check for updates';
-  btn.classList.toggle('btn-green', !!available);
-  if (state) state.textContent = available ? '· update available' : '· up to date';
-}
-
-async function runUpdate() {
-  const btn = document.getElementById('update-btn');
-  const status = document.getElementById('update-status');
-  btn.textContent = 'Checking...';
-  btn.disabled = true;
-  status.hidden = false;
-  status.textContent = 'Checking for updates...';
-  try {
-    const check = await fetch('/update/check');
-    const checkData = await check.json();
-    if (!checkData.available) {
-      // latest is null when the check itself failed (e.g. no network): don't claim "up to date" then.
-      status.textContent = checkData.latest
-        ? 'Already up to date (v' + checkData.latest + ').'
-        : 'Could not check for updates. Please try again later.';
-      if (checkData.latest) setUpdateState(false); else btn.textContent = 'Check for updates';
-      btn.disabled = false;
-      setTimeout(function() { status.hidden = true; }, 5000);
-      return;
-    }
-    status.textContent = 'Update found. Installing...';
-    const resp = await fetch('/update/run', { method: 'POST' });
-    const data = await resp.json();
-    if (data.updating) {
-      status.textContent = 'Restarting...';
-      setTimeout(function pollServer() {
-        fetch('/health').then(function(r) { if (r.ok) location.reload(); else setTimeout(pollServer, 2000); }).catch(function() { setTimeout(pollServer, 2000); });
-      }, 5000);
-    } else if (data.error) {
-      status.textContent = data.error;
-      setUpdateState(true);
-      btn.disabled = false;
-    }
-  } catch(e) {
-    status.textContent = 'Update may be in progress. Refreshing...';
-    setTimeout(function pollServer() {
-      fetch('/health').then(function(r) { if (r.ok) location.reload(); else setTimeout(pollServer, 2000); }).catch(function() { setTimeout(pollServer, 2000); });
-    }, 3000);
-  }
-}
-
-// Check for updates on page load
-fetch('/update/check').then(function(r) { return r.json(); }).then(function(d) {
-  if (d.available) setUpdateState(true);
-  else if (d.latest) setUpdateState(false);
-}).catch(function() {});
-
-async function runSync() {
-  const btn = document.getElementById('sync-btn');
-  const label = btn.querySelector('span');
-  const chip = document.getElementById('bridge-chip');
-  label.textContent = 'Syncing...';
-  btn.classList.add('is-busy');
-  btn.disabled = true;
-  if (chip) { chip.className = 'chip chip-crossing'; chip.innerHTML = '<span>syncing</span><b>&rarr;</b>'; }
-  try {
-    await fetch('/sync/now', { method: 'POST' });
-    var attempts = 0;
-    var poll = setInterval(function() {
-      attempts++;
-      fetch('/api/sync-status').then(function(r) { return r.json(); }).then(function(d) {
-        if (!d.running && attempts > 1) {
-          clearInterval(poll);
-          location.reload();
-        }
-      }).catch(function() {
-        if (attempts > 60) {
-          clearInterval(poll);
-          location.reload();
-        }
-      });
-    }, 2000);
-  } catch(e) {
-    label.textContent = 'Error, try again';
-    btn.classList.remove('is-busy');
-    btn.disabled = false;
-  }
-}
 </script>
+{% include "_status_scripts.html" %}
 {% endblock %}
