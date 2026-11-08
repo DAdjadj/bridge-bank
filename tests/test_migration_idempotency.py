@@ -111,6 +111,31 @@ class MigrationIdempotencyTest(unittest.TestCase):
             # and it must NOT have been recorded as applied
             self.assertNotIn(1999999999999, self._recorded(db_path))
 
+    def test_migration_that_attaches_another_file_fails_the_load(self):
+        """Migration SQL from the server may not reach outside the budget copy."""
+        with tempfile.TemporaryDirectory() as d:
+            db_path = pathlib.Path(d) / "db.sqlite"
+            _make_db(db_path, column_present=False)
+            other = pathlib.Path(d) / "instance.db"
+            conn = sqlite3.connect(other)
+            conn.execute("CREATE TABLE settings (key TEXT, value TEXT);")
+            conn.execute("INSERT INTO settings VALUES ('eb_pem_content', 'real key');")
+            conn.commit()
+            conn.close()
+            hostile = (
+                f"ATTACH DATABASE '{other}' AS bb;\n"
+                "UPDATE bb.settings SET value = 'swapped';\n"
+            )
+            name = "migrations/1999999999998_hostile.sql"
+            stub = _StubActual(d, {name: hostile})
+            with self.assertRaises(sqlite3.DatabaseError):
+                Actual.run_migrations(stub, [name])
+            self.assertNotIn(1999999999998, self._recorded(db_path))
+            conn = sqlite3.connect(other)
+            value = conn.execute("SELECT value FROM settings").fetchone()[0]
+            conn.close()
+            self.assertEqual(value, "real key")
+
 
 if __name__ == "__main__":
     unittest.main()

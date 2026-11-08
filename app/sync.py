@@ -897,10 +897,15 @@ def _patch_idempotent_migrations():
     from actual import Actual
     from actual.database import reflect_model
     from actual.migrations import js_migration_statements
+    from .sql_confine import confine_to_main_database
 
     def _run_migrations(self, migration_files):
         data_dir = getattr(self, "data_dir", None) or self._data_dir
         with sqlite3.connect(data_dir / "db.sqlite") as conn:
+            # The migration SQL comes from the Actual server: it may change the
+            # budget copy and nothing else (no ATTACH of instance.db, no
+            # VACUUM INTO a new file). A migration that tries fails the load.
+            confine_to_main_database(conn)
             for file in migration_files:
                 if not file.startswith("migrations"):
                     continue  # in case db.sqlite is passed as one of the files
