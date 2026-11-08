@@ -55,7 +55,8 @@ def _is_unsubscribed(email: str) -> bool:
     return result
 
 
-def _smtp_host_for(email: str) -> str:
+def _smtp_host_for(email: str, smtp_host: str = None) -> str:
+    """The server mail from this address goes through; smtp_host stands in for the saved SMTP host."""
     domain = email.split("@")[-1].lower() if "@" in email else ""
     mapping = {
         "gmail.com":      "smtp.gmail.com",
@@ -68,7 +69,7 @@ def _smtp_host_for(email: str) -> str:
         "live.com":       "smtp.office365.com",
         "yahoo.com":      "smtp.mail.yahoo.com",
     }
-    host = mapping.get(domain) or config.SMTP_HOST
+    host = mapping.get(domain) or (config.SMTP_HOST if smtp_host is None else smtp_host)
     if not host:
         logger.warning("Could not determine SMTP host for '%s'. Set SMTP_HOST in your .env file or use a supported email provider (Gmail, iCloud, Outlook, Yahoo).", domain)
         host = f"smtp.{domain}"

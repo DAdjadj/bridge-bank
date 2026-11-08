@@ -627,8 +627,18 @@ def setup_notifications():
 
 @app.route("/email/test", methods=["POST"])
 def test_email():
+    from .. import email_notify
     # Save current form values so the test uses what the user sees
     data = request.get_json(silent=True) or {}
+    new_user = (data.get("smtp_user") or "").strip() or config.SMTP_USER
+    new_host = (data.get("smtp_host") or "").strip() if "smtp_host" in data else config.SMTP_HOST
+    new_auth = (data.get("smtp_auth") or "true").strip() if "smtp_auth" in data else config.SMTP_AUTH
+    new_server = email_notify._smtp_host_for(new_user, new_host) if new_user else new_host
+    if (not data.get("smtp_password") and config.SMTP_PASSWORD
+            and email_notify._as_bool(new_auth, True)
+            and (new_server or "").lower() != (email_notify._smtp_host() or "").lower()):
+        # The saved password only ever goes to the server it was saved for.
+        return jsonify({"error": "Enter the SMTP password again to send through a different server."}), 400
     if data.get("notify_email"):
         config.set("NOTIFY_EMAIL", data["notify_email"].strip())
     if data.get("smtp_user"):
@@ -650,7 +660,6 @@ def test_email():
     if "smtp_auth" in data:
         config.set("SMTP_AUTH", (data.get("smtp_auth") or "true").strip())
     try:
-        from .. import email_notify
         email_notify.send_test(data.get("notify_on"))
         return jsonify({"ok": True})
     except Exception as e:
