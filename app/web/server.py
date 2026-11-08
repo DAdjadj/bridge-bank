@@ -711,15 +711,24 @@ def resubscribe_email():
 def setup_sync():
     error = None
     if request.method == "POST":
-        sync_time = request.form.get("sync_time", "06:00").strip()
-        sync_frequency = request.form.get("sync_frequency", "24").strip()
+        raw_time = request.form.get("sync_time", "06:00").strip()
+        sync_frequency = config.parse_sync_frequency(request.form.get("sync_frequency", "24"))
+        sync_time = config.parse_sync_time(raw_time)
         start_date = request.form.get("start_sync_date", "").strip()
+        # A bad value would stop the scheduler, so nothing is saved until both read.
+        # Manual only doesn't use the time: a blank or bad one keeps the saved time.
+        if sync_frequency is None:
+            error = "Choose how often to sync."
+        elif sync_time is None and sync_frequency != 0:
+            error = "Enter the sync time as HH:MM, for example 06:00."
+    if request.method == "POST" and not error:
         auto_link_transfer_values = [
             value.strip().lower()
             for value in request.form.getlist("auto_link_transfers")
         ]
-        config.set("SYNC_TIME", sync_time)
-        config.set("SYNC_FREQUENCY", sync_frequency)
+        if sync_time:
+            config.set("SYNC_TIME", sync_time)
+        config.set("SYNC_FREQUENCY", str(sync_frequency))
         auto_link_transfers = any(
             value in ("1", "true", "yes", "on")
             for value in auto_link_transfer_values
@@ -737,8 +746,8 @@ def setup_sync():
     has_synced = bool(db.get_last_sync())
     return render_template("setup_sync.html",
         error=error,
-        sync_time=config.SYNC_TIME or "06:00",
-        sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or "24",
+        sync_time=config.sync_time(),
+        sync_frequency=str(config.sync_frequency()),
         auto_link_transfers=_config_bool("AUTO_LINK_TRANSFERS", True),
         iban_in_notes=_config_bool("IBAN_IN_NOTES", False),
         start_sync_date=config.START_SYNC_DATE or __import__('datetime').date.today().isoformat(),
@@ -772,7 +781,7 @@ def health():
             status = "degraded"
         # Check if sync is overdue (more than frequency + 2h buffer)
         try:
-            freq = int(getattr(config, "SYNC_FREQUENCY", "24") or "24")
+            freq = config.sync_frequency()
             if freq > 0:
                 last_dt = datetime.fromisoformat(last["ran_at"]).replace(tzinfo=timezone.utc)
                 hours_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
@@ -807,7 +816,7 @@ def health():
 
     # Scheduler check — revive the loop thread if it somehow died
     from .. import scheduler as _scheduler
-    freq = int(getattr(config, "SYNC_FREQUENCY", "24") or "24")
+    freq = config.sync_frequency()
     if freq > 0 and config.is_configured() and not _scheduler.is_alive():
         logger.warning("Scheduler thread not running; restarting it")
         _start_scheduler_if_ready()
@@ -2015,8 +2024,8 @@ def status():
         pending_bank_name=db.get_setting("pending_bank_name"),
         days_left=days_left,
         last_sync=last_sync,
-        sync_time=config.SYNC_TIME,
-        sync_frequency=getattr(config, 'SYNC_FREQUENCY', '24') or '24',
+        sync_time=config.sync_time(),
+        sync_frequency=str(config.sync_frequency()),
         auto_link_transfers=_config_bool("AUTO_LINK_TRANSFERS", True),
         iban_in_notes=_config_bool("IBAN_IN_NOTES", False),
         sync_times=_get_sync_times(),
@@ -2407,8 +2416,8 @@ def banks():
 # ---------------------------------------------------------------------------
 
 def _get_sync_times():
-    sync_time = config.SYNC_TIME or "06:00"
-    frequency = int(getattr(config, 'SYNC_FREQUENCY', '24') or '24')
+    sync_time = config.sync_time()
+    frequency = config.sync_frequency()
     if frequency == 0:
         return "Manual only"
     h, m = int(sync_time.split(":")[0]), int(sync_time.split(":")[1])

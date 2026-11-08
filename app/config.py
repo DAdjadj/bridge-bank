@@ -1,5 +1,6 @@
 import os
 import json
+import re
 
 CONFIG_FILE = "/data/config.json"
 
@@ -70,6 +71,35 @@ def set(key: str, value: str):
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=2)
     globals()[key] = value
+
+# Hours between syncs that fit evenly into a day; 0 means manual only.
+_SYNC_FREQUENCIES = (0, 1, 2, 3, 4, 6, 8, 12, 24)
+_DEFAULT_SYNC_TIME = "06:00"
+_DEFAULT_SYNC_FREQUENCY = 24
+
+def parse_sync_time(value):
+    """'6:30' or '06:30' as '06:30'; None when it isn't a real time of day."""
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value or "").strip())
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        return None
+    return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+def parse_sync_frequency(value):
+    """Hours between syncs as an int (0 = manual only); None when not one of the choices."""
+    try:
+        hours = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return hours if hours in _SYNC_FREQUENCIES else None
+
+def sync_time() -> str:
+    """The saved sync time, or 06:00 if what's saved can't be read."""
+    return parse_sync_time(SYNC_TIME) or _DEFAULT_SYNC_TIME
+
+def sync_frequency() -> int:
+    """The saved hours between syncs, or every 24 hours if what's saved can't be read."""
+    hours = parse_sync_frequency(SYNC_FREQUENCY)
+    return _DEFAULT_SYNC_FREQUENCY if hours is None else hours
 
 def is_configured() -> bool:
     """Returns True if all required fields are set."""

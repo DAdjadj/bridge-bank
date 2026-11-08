@@ -76,8 +76,11 @@ def is_alive() -> bool:
 
 def start():
     global _loop_thread
-    sync_time = config.SYNC_TIME or "06:00"
-    frequency = int(getattr(config, 'SYNC_FREQUENCY', '24') or '24')
+    sync_time = config.sync_time()
+    frequency = config.sync_frequency()
+    if config.parse_sync_time(config.SYNC_TIME) is None or config.parse_sync_frequency(config.SYNC_FREQUENCY) is None:
+        logger.warning("Sync schedule setting unreadable (time %r, every %r hours); using %s every %dh",
+                       config.SYNC_TIME, config.SYNC_FREQUENCY, sync_time, frequency)
     tz_name = getattr(config, 'TIMEZONE', '') or ''
 
     # Clear any previously scheduled jobs (e.g. if settings changed)
