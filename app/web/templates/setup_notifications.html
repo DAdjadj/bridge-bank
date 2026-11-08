@@ -57,7 +57,7 @@
           <option value="false" {% if smtp_auth == "false" %}selected{% endif %}>No authentication</option>
         </select>
         <label style="display:flex;align-items:center;gap:0.5rem;margin-top:0.9rem;font-size:12px;color:var(--text);">
-          <input type="checkbox" id="smtp_tls_verify" name="smtp_tls_verify" {% if smtp_tls_verify != "false" %}checked{% endif %}>
+          <input type="checkbox" id="smtp_tls_verify" name="smtp_tls_verify" {% if smtp_tls_verify != "false" or smtp_security == "none" %}checked{% endif %}>
           Verify TLS certificates
         </label>
       </div>

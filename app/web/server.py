@@ -577,6 +577,10 @@ def setup_notifications():
         smtp_port     = request.form.get("smtp_port", "587").strip() or "587"
         smtp_security = request.form.get("smtp_security", "starttls").strip() or "starttls"
         smtp_tls_verify = "true" if request.form.get("smtp_tls_verify") == "on" else "false"
+        if smtp_security == "none":
+            # The page greys the box out (so the browser doesn't send it) when
+            # there's no TLS. Keep checks on for when TLS is picked again.
+            smtp_tls_verify = "true"
         smtp_auth     = request.form.get("smtp_auth", "true").strip() or "true"
         notify_on     = request.form.get("notify_on", "all").strip()
         holder_name   = request.form.get("holder_name", "").strip()
@@ -640,7 +644,9 @@ def test_email():
     if "smtp_security" in data:
         config.set("SMTP_SECURITY", (data.get("smtp_security") or "starttls").strip())
     if "smtp_tls_verify" in data:
-        config.set("SMTP_TLS_VERIFY", (data.get("smtp_tls_verify") or "true").strip())
+        # No TLS means nothing to verify: keep checks on for when TLS is picked again.
+        verify = "true" if (config.SMTP_SECURITY or "").strip() == "none" else (data.get("smtp_tls_verify") or "true").strip()
+        config.set("SMTP_TLS_VERIFY", verify)
     if "smtp_auth" in data:
         config.set("SMTP_AUTH", (data.get("smtp_auth") or "true").strip())
     try:
