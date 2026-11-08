@@ -412,7 +412,7 @@ def build_session_expiry_warning(days_left: int, bank_name: str = None):
         "steps_title": "Renew it in three steps",
         "steps": [
             f"Open Bridge Bank and go to the {_page_link('Bank page', '/bank')}.",
-            f"Click Re-authorize under {bank or 'the bank'}.",
+            f"Click Re-authorize under {design.text(bank) or 'the bank'}.",
             "Sign in at your bank and approve access.",
         ],
         "cta": _open_button("Open the Bank page", "/bank"),

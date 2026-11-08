@@ -55,15 +55,28 @@ def esc(s) -> str:
 
 # Content strings may carry [links](https://...). HTML gets an <a>, text gets "words (address)".
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+# Only web and email addresses become links; anything else stays as written.
+_SAFE_HREF = re.compile(r"^(https?://|mailto:)", re.I)
+
+
+def text(s) -> str:
+    """Data (a bank name, say) going into content: its brackets can never form a link."""
+    return ("" if s is None else str(s)).replace("[", "(").replace("]", ")")
 
 
 def md(s, link=LINK, cls="lk") -> str:
-    return _LINK.sub(lambda m: f'<a class="{cls}" href="{m.group(2)}" style="color:{link};text-decoration:underline">{m.group(1)}</a>', esc(s))
+    def a(m):
+        if not _SAFE_HREF.match(m.group(2)):
+            return m.group(0)
+        return f'<a class="{cls}" href="{m.group(2)}" style="color:{link};text-decoration:underline">{m.group(1)}</a>'
+    return _LINK.sub(a, esc(s))
 
 
 def plain(s) -> str:
     def repl(m):
         txt, href = m.group(1), m.group(2)
+        if not _SAFE_HREF.match(href):
+            return m.group(0)
         if href == f"mailto:{txt}":
             return txt
         if txt == re.sub(r"^https?://", "", href):

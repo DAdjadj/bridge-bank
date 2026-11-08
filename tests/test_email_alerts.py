@@ -153,6 +153,28 @@ class AlertContentTest(unittest.TestCase):
         self.assertNotIn("<b>Evil</b>", html)
         self.assertIn("&lt;b&gt;Evil&lt;/b&gt; &amp; Co", html)
 
+    def test_a_bank_name_cannot_carry_a_link(self):
+        _, e = email_notify.build_session_expiry_warning(3, "ING [Sign in here](https://evil.example/login)")
+        html, text = email_design.render_html(e), email_design.render_text(e)
+        self.assertNotIn('href="https://evil.example', html)
+        self.assertIn("ING (Sign in here)(https://evil.example/login)", html)
+        self.assertIn("Re-authorize under ING (Sign in here)", text)
+        # the app's own Bank page link still works
+        self.assertIn('href="http://192.168.1.20:3002/bank"', html)
+
+    def test_only_web_and_mail_addresses_become_links(self):
+        self.assertIn('href="https://bridgebank.app"', email_design.md("[Site](https://bridgebank.app)"))
+        self.assertIn('href="http://192.168.1.20:3002"', email_design.md("[App](http://192.168.1.20:3002)"))
+        self.assertIn('href="mailto:help@bridgebank.app"', email_design.md("[help](mailto:help@bridgebank.app)"))
+        for bad in ("javascript:alert(1)", "data:text/html,x", "JavaScript:x", "//evil.example", "file:///etc/passwd"):
+            with self.subTest(bad):
+                out = email_design.md(f"[click]({bad})")
+                self.assertNotIn("<a", out)
+                self.assertIn("[click]", out)
+                self.assertEqual(email_design.plain(f"[click]({bad})"), f"[click]({bad})")
+        self.assertEqual(email_design.text("Bank [NL]"), "Bank (NL)")
+        self.assertEqual(email_design.text(None), "")
+
 
 class SendingTest(unittest.TestCase):
     def setUp(self):
