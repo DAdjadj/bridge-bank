@@ -4,6 +4,7 @@ import threading
 from urllib.parse import quote
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from .. import config, db, licence, sync
+from ..log_redact import sanitize_logs
 
 logger = logging.getLogger(__name__)
 
@@ -1699,7 +1700,7 @@ def pick_account():
     if not accounts_json:
         return redirect(url_for("bank"))
     accounts = _decorate_picker_accounts(json.loads(accounts_json))
-    logger.info("Account picker data: %s", accounts_json)
+    logger.info("Account picker shown with %d account(s)", len(accounts))
     # When a re-auth covers several stored accounts at the same bank, map each
     # one instead of connecting a single account and orphaning the rest.
     siblings = _reauth_sibling_accounts()
@@ -2212,17 +2213,7 @@ def reset_sync():
 # Logs
 # ---------------------------------------------------------------------------
 
-def _sanitize_logs(text):
-    # Mask IBANs (2 letter country + 2 digits + up to 30 chars)
-    text = re.sub(r'\b([A-Z]{2}\d{2})\w{4,}(\w{4})\b', r'\1****\2', text)
-    # Mask email addresses
-    text = re.sub(r'\b(\w{2})\w*(@\w+\.\w+)', r'\1***\2', text)
-    # Remove large JSON account blobs from Enable Banking
-    text = re.sub(r"\[?\{'account_id':.*?\}\]?", '[account data redacted]', text)
-    # Mask OAuth query params: the access log records GET /callback?code=...&state=...
-    # and these logs get emailed to support, so the single-use code must not survive here.
-    text = re.sub(r'([?&](?:code|state)=)[^&\s"]+', r'\1[redacted]', text)
-    return text
+_sanitize_logs = sanitize_logs
 
 LOG_FILE = "/data/bridge-bank.log"
 

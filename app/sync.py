@@ -1803,7 +1803,8 @@ def _sync_account(account, state):
                                 else:
                                     skipped += 1
                     except Exception as e:
-                        log.warning("Skipping transaction: %s | %s", e, txn)
+                        log.warning("Skipping transaction: %s | id=%s", e,
+                                    txn.get("transaction_id") or txn.get("entry_reference"))
 
             try:
                 with _actual_phase(bank_label, "apply Actual rules"):
