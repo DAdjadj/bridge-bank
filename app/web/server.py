@@ -487,12 +487,14 @@ def setup_bank():
         pem_content = ""
         if pem_file and pem_file.filename:
             pem_content = pem_file.read().decode("utf-8", errors="ignore").strip()
-            if pem_content and "PRIVATE KEY" not in pem_content:
+            if "PRIVATE KEY" not in pem_content:
                 error = "This doesn't look like a valid .pem file. Make sure you upload the private key file from Enable Banking."
         existing_pem = db.get_setting("eb_pem_content")
-        if not error and not app_id:
+        if error:
+            pass  # keep the stored key and settings as they were
+        elif not app_id:
             error = "Application ID is required."
-        elif not error and not pem_content and not existing_pem:
+        elif not pem_content and not existing_pem:
             error = "Please upload your private.pem file."
         else:
             config.set("EB_APPLICATION_ID", app_id)
