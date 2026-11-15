@@ -766,6 +766,28 @@ def _find_pending_for_booking(existing, pending_map, ref):
             return key, t
     return None
 
+def _pending_slot(existing, pending_map, date, amount, ref):
+    """The pending_map key to file a pending transaction under, or None if it is already there.
+
+    pending_map is keyed on date|amount, so two pending card payments for the
+    same amount on the same day (two of one device ordered separately, a fare
+    paid twice) shared one key and the second was skipped as a repeat of the
+    first. When the bank gives references, a pending copy is only the same
+    payment if its reference matches; a second payment gets its own key with the
+    reference appended. The date stays first, so the date_from look-back that
+    reads k.split("|")[0] keeps working.
+    """
+    key = f"{date}|{amount}"
+    if ref:
+        if _find_pending_for_booking(existing, pending_map, ref):
+            return None
+        if key in pending_map:
+            held_id = pending_map[key]
+            held = next((t for t in existing if str(t.id) == held_id), None)
+            if held is not None and held.financial_id and held.financial_id != ref:
+                key = f"{key}|{ref}"
+    return None if key in pending_map else key
+
 def _record_reconciled_transaction(transaction, existing_ids: set[str], new_txn: list) -> str:
     txn_id = str(transaction.id)
     is_new_txn = txn_id not in existing_ids
@@ -1703,7 +1725,8 @@ def _sync_account(account, state):
                         key    = f"{date}|{amount}"
 
                         if status == "PDNG":
-                            if key not in pending_map:
+                            slot = _pending_slot(existing, pending_map, date, amount, ref)
+                            if slot is not None:
                                 try:
                                     t = reconcile_transaction(
                                         actual.session, date, account_obj, payee, notes,
@@ -1720,7 +1743,7 @@ def _sync_account(account, state):
                                 claimed_ids.add(str(t.id))
                                 result = _record_reconciled_transaction(t, existing_ids, new_txn)
                                 if result != "skipped":
-                                    pending_map[key] = str(t.id)
+                                    pending_map[slot] = str(t.id)
                                     if result == "added":
                                         added += 1
                                     else:
@@ -1733,7 +1756,16 @@ def _sync_account(account, state):
                             if ref and ref in imported_refs:
                                 skipped += 1
                                 continue
-                            if key in pending_map:
+                            settled = _find_pending_for_booking(existing, pending_map, ref)
+                            if settled is not None:
+                                pending_key, existing_txn = settled
+                                existing_txn.set_amount(amount)
+                                existing_txn.cleared = True
+                                del pending_map[pending_key]
+                                claimed_ids.add(str(existing_txn.id))
+                                imported_refs.add(ref)
+                                updated += 1
+                            elif key in pending_map:
                                 txn_id       = pending_map[key]
                                 existing_txn = next((t for t in existing if str(t.id) == txn_id), None)
                                 if existing_txn:
@@ -1747,14 +1779,6 @@ def _sync_account(account, state):
                                     del pending_map[key]
                                     if ref: imported_refs.add(ref)
                                     skipped += 1
-                            elif (settled := _find_pending_for_booking(existing, pending_map, ref)):
-                                pending_key, existing_txn = settled
-                                existing_txn.set_amount(amount)
-                                existing_txn.cleared = True
-                                del pending_map[pending_key]
-                                claimed_ids.add(str(existing_txn.id))
-                                imported_refs.add(ref)
-                                updated += 1
                             else:
                                 duplicate = _find_imported_duplicate(
                                     existing, claimed_ids, date, amount, payee,
