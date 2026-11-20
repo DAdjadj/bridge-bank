@@ -896,6 +896,61 @@ def ensure_actual_compat_patches():
     first, so budget downloads survive budgets from newer Actual servers."""
     _patch_idempotent_migrations()
     _patch_unknown_table_sync()
+    _patch_own_client_id()
+
+_CLIENT_ID_FILE = "/data/actual-client-id"
+_own_client_id_value = None
+_own_client_id_patched = False
+
+def _own_client_id():
+    """Bridge Bank's own device id in Actual's sync log: 16 hex characters like Actual's own, kept in
+    /data so every run signs with the same one (a fresh one per process when /data can't be written)."""
+    global _own_client_id_value
+    if _own_client_id_value:
+        return _own_client_id_value
+    import re
+    from actual.protobuf_models import HULC_Client
+    value = None
+    try:
+        with open(_CLIENT_ID_FILE) as f:
+            value = f.read().strip()
+    except OSError:
+        pass
+    if not value or not re.fullmatch(r"[0-9a-f]{16}", value):
+        value = HULC_Client.random_client_id()
+        try:
+            with open(_CLIENT_ID_FILE, "w") as f:
+                f.write(value)
+        except OSError:
+            pass
+    _own_client_id_value = value
+    return value
+
+def _patch_own_client_id():
+    """Sign every change with Bridge Bank's own device id.
+
+    actualpy (through 0.22.3) takes its clock from the last message it synced, device id included
+    (Actual.sync: HULC_Client.from_timestamp(last message)), so Bridge Bank's imports went out under
+    whichever device wrote last: the web app, the iPhone app. Every timestamp it makes goes through
+    Actual._sync_client, so that is where the id is put back; the time and counter stay, which keeps
+    the clock moving forward."""
+    global _own_client_id_patched
+    if _own_client_id_patched:
+        return
+    from actual import Actual
+    from actual.exceptions import ActualError
+
+    def _sync_client(self):
+        client = self._hulc_client
+        if client is None:
+            raise ActualError("Client not initialized. Download or create a budget first.")
+        own = _own_client_id()
+        if client.client_id != own:
+            client.client_id = own
+        return client
+
+    Actual._sync_client = property(_sync_client)
+    _own_client_id_patched = True
 
 def _patch_idempotent_migrations():
     """Tolerate already-applied schema changes when actualpy replays migrations.
