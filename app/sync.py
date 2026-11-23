@@ -40,6 +40,10 @@ COUNTERPARTY_IBAN_KEEP_DAYS = 120
 # ever matches its own earlier import on the same day. Anything wider would let
 # a genuine repeat purchase later in the week be swallowed as a duplicate.
 DUPLICATE_MATCH_WINDOW_DAYS = 0
+# A payment added by hand (the Bridge Budget app adds one the moment someone
+# pays with Apple Pay) is dated the day it was made; the bank can post it a few
+# days later or, with a value date, a day earlier.
+MANUAL_MATCH_WINDOW_DAYS = 3
 ACTUAL_RETRY_DELAYS_SECONDS = (15, 60)
 
 def _config_flag(name, default=True):
@@ -742,6 +746,78 @@ def _find_imported_duplicate(existing, claimed_ids, date, amount, imported_payee
         return None
     candidates.sort(key=lambda pair: pair[0])
     return candidates[0][1]
+
+def _plain_payee(name):
+    """A payee as lowercase words without accents: 'Pingo Doce, Lisboa' -> 'pingo doce lisboa'."""
+    import re, unicodedata
+    plain = unicodedata.normalize("NFKD", name or "")
+    plain = "".join(c for c in plain if not unicodedata.combining(c)).casefold()
+    return " ".join(re.findall(r"[a-z0-9]+", plain))
+
+def _same_payee(a, b):
+    """Whether a typed payee and the bank's payee text name the same place.
+
+    Loose on purpose: case and accents are ignored and one only has to contain
+    the other as whole words, so 'Pingo Doce' matches 'PINGO DOCE LISBOA'.
+    """
+    pa, pb = _plain_payee(a), _plain_payee(b)
+    if not pa or not pb:
+        return False
+    return f" {pa} " in f" {pb} " or f" {pb} " in f" {pa} "
+
+def _find_manual_entry(existing, claimed_ids, date, amount, bank_payee):
+    """Find a transaction someone added by hand for the payment the bank now reports.
+
+    The Bridge Budget app adds a payment the moment it is made (an Apple Pay
+    automation), with the merchant as payee, today's date, not cleared, and no
+    bank reference. actualpy's fuzzy match never sees it, because every existing
+    transaction is in already_matched, and the other dedup paths only know
+    copies we imported ourselves, so the bank import added a second copy.
+
+    Candidates: never imported (no financial_id, no imported_description), not
+    reconciled, not a split, not claimed by an earlier line of this fetch, the
+    exact amount, dated within MANUAL_MATCH_WINDOW_DAYS of the bank date. The
+    same payee ranks first, then the nearest date. When the best rank is shared
+    by candidates that differ (another payee, another date, another category or
+    note), we cannot tell which one the bank means, so None is returned and the
+    import is added as before. Copies that are the same in every way (two equal
+    coffees typed on one day) are interchangeable, so the first is taken and the
+    next bank line takes the other.
+    """
+    target_amount = round(decimal.Decimal(amount) * 100)
+    candidates    = []
+    for t in existing:
+        if str(t.id) in claimed_ids or t.is_child or getattr(t, "is_parent", 0):
+            continue
+        if getattr(t, "financial_id", None) or getattr(t, "imported_description", None):
+            continue
+        if getattr(t, "reconciled", 0) or getattr(t, "starting_balance_flag", 0):
+            continue
+        if t.amount != target_amount:
+            continue
+        distance = abs((t.get_date() - date).days)
+        if distance > MANUAL_MATCH_WINDOW_DAYS:
+            continue
+        payee = getattr(t, "payee", None)
+        same  = _same_payee(getattr(payee, "name", None), bank_payee)
+        candidates.append(((0 if same else 1, distance), t))
+    if not candidates:
+        return None
+    best = min(rank for rank, _ in candidates)
+    tied = [t for rank, t in candidates if rank == best]
+    first = tied[0]
+    def looks(t):
+        return (t.get_date(), getattr(t, "payee_id", None),
+                getattr(t, "category_id", None), (t.notes or "").strip())
+    if any(looks(t) != looks(first) for t in tied[1:]):
+        return None
+    return first
+
+def _claim_manual_entry(manual, ref, bank_payee, cleared):
+    """Link a hand-added transaction to its bank line, leaving what the person typed alone."""
+    manual.financial_id         = ref or None
+    manual.imported_description = bank_payee
+    manual.cleared              = cleared
 
 def _find_pending_for_booking(existing, pending_map, ref):
     """Find the pending copy of a booking whose amount or date changed on settling.
@@ -1782,6 +1858,16 @@ def _sync_account(account, state):
                         if status == "PDNG":
                             slot = _pending_slot(existing, pending_map, date, amount, ref)
                             if slot is not None:
+                                manual = _find_manual_entry(existing, claimed_ids, date, amount, payee)
+                                if manual is not None:
+                                    _claim_manual_entry(manual, ref, payee, cleared=False)
+                                    already_matched.append(manual)
+                                    claimed_ids.add(str(manual.id))
+                                    pending_map[slot] = str(manual.id)
+                                    log.info("%s: matched a pending bank transaction to one added "
+                                             "by hand; kept the existing copy", bank_label)
+                                    updated += 1
+                                    continue
                                 try:
                                     t = reconcile_transaction(
                                         actual.session, date, account_obj, payee, notes,
@@ -1857,6 +1943,17 @@ def _sync_account(account, state):
                                         updated += 1
                                     else:
                                         skipped += 1
+                                    continue
+                                manual = _find_manual_entry(existing, claimed_ids, date, amount, payee)
+                                if manual is not None:
+                                    _claim_manual_entry(manual, ref, payee, cleared=True)
+                                    already_matched.append(manual)
+                                    claimed_ids.add(str(manual.id))
+                                    if ref:
+                                        imported_refs.add(ref)
+                                    log.info("%s: matched a bank transaction to one added "
+                                             "by hand; kept the existing copy", bank_label)
+                                    updated += 1
                                     continue
                                 try:
                                     t = reconcile_transaction(
