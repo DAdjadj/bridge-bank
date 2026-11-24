@@ -1,11 +1,12 @@
 """Regression tests for the unknown-table sync patch.
 
 Actual 26.4.0 introduced the experimental Payee Locations feature and with it
-a payee_locations table. actualpy (through 0.22.3) has no model for it, so
-Actual.apply_changes raises "Could not find table 'payee_locations' on the
+a payee_locations table. actualpy before 0.23.0 had no model for it, so
+Actual.apply_changes raised "Could not find table 'payee_locations' on the
 database model" on the first sync message touching it, and every budget
-download fails. The patch drops messages for tables missing from actualpy's
-model registry and applies the rest. See app.sync._patch_unknown_table_sync.
+download failed. The patch drops messages for tables missing from actualpy's
+model registry and applies the rest; it stays as a guard for the next table
+Actual adds. See app.sync._patch_unknown_table_sync.
 """
 import unittest
 
@@ -44,10 +45,11 @@ class UnknownTableSyncTest(unittest.TestCase):
         return [m.dataset for m in self.received[-1]]
 
     def test_unknown_table_messages_are_dropped(self):
-        """The exact production case: payee_locations messages in the stream."""
+        """Like the payee_locations case in production, with a table actualpy
+        does not model."""
         messages = [
             _Message("transactions"),
-            _Message("payee_locations"),
+            _Message("some_future_table"),
             _Message("payees"),
         ]
         self.assertEqual(
@@ -56,7 +58,7 @@ class UnknownTableSyncTest(unittest.TestCase):
 
     def test_prefs_messages_are_kept(self):
         """'prefs' is not a model table but apply_changes handles it specially."""
-        messages = [_Message("prefs"), _Message("payee_locations")]
+        messages = [_Message("prefs"), _Message("some_future_table")]
         self.assertEqual(self._datasets_passed_through(messages), ["prefs"])
 
     def test_known_tables_pass_through_untouched(self):
@@ -65,12 +67,13 @@ class UnknownTableSyncTest(unittest.TestCase):
             self._datasets_passed_through([_Message(d) for d in datasets]), datasets
         )
 
-    def test_payee_locations_still_unknown_upstream(self):
-        """When this fails, actualpy has gained payee_locations support and
-        _patch_unknown_table_sync no longer needs to cover for it."""
-        from actual.database import __TABLE_COLUMNS_MAP__ as table_map
-
-        self.assertNotIn("payee_locations", table_map)
+    def test_payee_locations_now_passes_through(self):
+        """actualpy 0.23.0 models payee_locations, so its changes are applied
+        instead of dropped."""
+        messages = [_Message("payee_locations"), _Message("payees")]
+        self.assertEqual(
+            self._datasets_passed_through(messages), ["payee_locations", "payees"]
+        )
 
     def test_ensure_helper_installs_the_patch(self):
         self.assertTrue(sync_mod._apply_changes_patched)

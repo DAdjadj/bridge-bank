@@ -877,68 +877,31 @@ def _record_reconciled_transaction(transaction, existing_ids: set[str], new_txn:
         return result
     return "skipped"
 
-def _patch_payee_name_rules(session):
-    """Remap Actual's UI-level rule field names to the ones actualpy accepts.
-
-    Actual Budget stores rule conditions/actions with fields like 'payee',
-    'account', 'payee_name' and 'imported_payee'; actualpy only accepts the
-    internal column names ('description', 'acct', 'imported_description').
-    Without this patch a single rule using one of those fields makes the
-    ruleset fail Pydantic validation and no rules apply on import."""
-    import json
-    from actual.queries import get_rules
-    field_map = {
-        "payee_name": "description",
-        "imported_payee": "imported_description",
-        "payee": "description",
-        "account": "acct",
-    }
-    for rule in get_rules(session):
-        for attr in ("conditions", "actions"):
-            raw = getattr(rule, attr, None)
-            if not raw:
-                continue
-            try:
-                items = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            patched = False
-            for item in items:
-                old = item.get("field")
-                if old in field_map:
-                    item["field"] = field_map[old]
-                    patched = True
-            if patched:
-                setattr(rule, attr, json.dumps(items))
-
 def _load_ruleset_tolerant(session):
-    """Build the ruleset one rule at a time, skipping rules actualpy cannot parse.
+    """Build the ruleset, skipping rules actualpy cannot parse.
 
-    actualpy's get_ruleset() validates every rule in one go, so a single rule
-    using an unsupported field or operator would disable EVERY rule for the
-    whole import (while manual 'Run Rules' in Actual still works, since that
-    uses Actual's own engine). Skipped rules are logged with their contents."""
-    from pydantic import TypeAdapter
-    from actual.queries import get_rules
-    from actual.rules import Rule, Condition, Action, RuleSet
-    rules = []
+    A rule using a field, operator or action actualpy does not support would
+    otherwise disable EVERY rule for the whole import (while 'Run Rules' in
+    Actual still works, since that uses Actual's own engine). actualpy >= 0.23
+    skips those itself with strict=False, but only as a Python warning; log
+    each one so it shows up in Bridge Bank's log."""
+    import warnings
+    from actual.queries import get_ruleset
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ruleset = get_ruleset(session, strict=False)
     skipped = 0
-    for rule in get_rules(session):
-        if not rule.conditions or not rule.actions:
-            continue
-        try:
-            conditions = TypeAdapter(list[Condition]).validate_json(rule.conditions)
-            actions = TypeAdapter(list[Action]).validate_json(rule.actions)
-            rules.append(Rule(conditions=conditions, operation=rule.conditions_op,
-                              actions=actions, stage=rule.stage))
-        except Exception as e:
+    for w in caught:
+        message = str(w.message)
+        if message.startswith("Skipping rule"):
             skipped += 1
             log.warning(
                 "Skipping rule the import engine cannot process (it still "
-                "works via 'Run Rules' in Actual). conditions=%s actions=%s | %s",
-                rule.conditions, rule.actions, e)
-    log.info("Rules loaded: %d, skipped: %d", len(rules), skipped)
-    return RuleSet(rules=rules)
+                "works via 'Run Rules' in Actual): %s", message.splitlines()[0])
+        else:
+            log.warning("%s", message)
+    log.info("Rules loaded: %d, skipped: %d", len(ruleset.rules), skipped)
+    return ruleset
 
 def _run_ruleset_tolerant(ruleset, transactions):
     """Run rules one at a time so a single failing rule cannot abort the rest.
@@ -960,7 +923,6 @@ def _run_ruleset_tolerant(ruleset, transactions):
     if failed_rules:
         log.warning("%d rule(s) failed at run time this pass", failed_rules)
 
-_action_run_patched = False
 _migrations_patched = False
 _apply_changes_patched = False
 
@@ -1101,15 +1063,14 @@ def _patch_unknown_table_sync():
     """Skip sync messages for tables this actualpy version does not model.
 
     Actual servers grow new tables ahead of actualpy releases: 26.4.0 added
-    payee_locations for the experimental Payee Locations feature, and actualpy
-    (through 0.22.3) has no model for it. apply_changes raises on the first
+    payee_locations for the experimental Payee Locations feature, which
+    actualpy only modeled from 0.23.0. Kept as a guard for the next new table. apply_changes raises on the first
     sync message touching an unknown table, so every budget download fails
     with "Could not find table '...' on the database model" until the library
     catches up. Bridge Bank only reads and writes accounts, transactions,
     payees and rules, so changes to other tables can safely be left out of its
     local budget copy; the server's data is untouched either way. Drop those
-    messages with a warning and apply the rest. Remove once actualpy models
-    the new tables. Upstream: bvanelli/actualpy apply_changes."""
+    messages with a warning and apply the rest. Upstream: bvanelli/actualpy apply_changes."""
     global _apply_changes_patched
     if _apply_changes_patched:
         return
@@ -1137,48 +1098,6 @@ def _patch_unknown_table_sync():
 
     Actual.apply_changes = _apply_changes
     _apply_changes_patched = True
-
-def _patch_action_note_casing():
-    """Stop actualpy from lowercasing note values written by rules.
-
-    actualpy's Action.run passes SET values through get_normalized_string()
-    (lowercase + NFD), which is meant for condition comparisons only. The
-    result: a rule that sets notes to '#Transferência' writes
-    '#transferência', on the main transaction and on every split. The real
-    Actual rule engine keeps the original casing. Patch SET actions on
-    string fields to write the raw value; everything else falls through to
-    the original implementation. Upstream: bvanelli/actualpy."""
-    global _action_run_patched
-    if _action_run_patched:
-        return
-    from actual import rules as _rules
-    _orig_run = _rules.Action.run
-
-    def _patched_run(self, transaction):
-        if (self.op == _rules.ActionType.SET
-                and self.type == _rules.ValueType.STRING
-                and isinstance(self.value, str)):
-            # Derive the split index from options directly instead of the
-            # get_split_index() helper, which only exists in actualpy
-            # >= 0.22.3. A production image with an older version turned
-            # this patch into an AttributeError on every set-notes rule.
-            split_index = 0
-            if self.options:
-                try:
-                    split_index = int(self.options.get("splitIndex", 0) or 0)
-                except (TypeError, ValueError):
-                    split_index = 0
-            splits = getattr(transaction, "splits", None) or []
-            if split_index and len(splits) >= split_index:
-                transaction = splits[split_index - 1]
-            attr = _rules.get_attribute_by_table_name(
-                str(_rules.Transactions.__tablename__), str(self.field))
-            setattr(transaction, attr, self.value)
-            return
-        return _orig_run(self, transaction)
-
-    _rules.Action.run = _patched_run
-    _action_run_patched = True
 
 def _run_rules_on_transfer_counterparts(actual, new_txn, ruleset):
     """Run rules on the mirrored side of transfers created by this import.
@@ -1210,40 +1129,6 @@ def _run_rules_on_transfer_counterparts(actual, new_txn, ruleset):
         return
     log.info("Applying rules to %d transfer counterpart(s)", len(counterparts))
     _run_ruleset_tolerant(ruleset, counterparts)
-    _fix_rule_note_casing(actual.session, counterparts)
-
-def _fix_rule_note_casing(session, transactions):
-    """Restore original case for notes set by rules.
-
-    actualpy lowercases all string values via get_normalized_string(), including
-    SET action values for notes. This compares each transaction's notes against
-    the lowercased rule value and restores the original case if they match.
-
-    Both sides are normalised to NFC before comparison so the check works
-    regardless of whether actualpy applies NFD normalisation internally."""
-    import json, unicodedata
-    from actual.queries import get_rules
-    note_rules = []
-    for rule in get_rules(session):
-        try:
-            actions = json.loads(rule.actions)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        for action in actions:
-            if action.get("field") == "notes" and action.get("op") == "set" and action.get("value"):
-                original = action["value"]
-                lowered = unicodedata.normalize("NFC", original).lower()
-                note_rules.append((lowered, original))
-    if not note_rules:
-        return
-    for txn in transactions:
-        if not txn.notes:
-            continue
-        txn_notes_nfc = unicodedata.normalize("NFC", txn.notes).lower()
-        for lowered, original in note_rules:
-            if txn_notes_nfc == lowered:
-                txn.notes = original
-                break
 
 def _txn_account_id(txn):
     return getattr(txn, "acct", None) or getattr(txn, "account", None)
@@ -1984,11 +1869,8 @@ def _sync_account(account, state):
 
             try:
                 with _actual_phase(bank_label, "apply Actual rules"):
-                    _patch_payee_name_rules(actual.session)
-                    _patch_action_note_casing()
                     ruleset = _load_ruleset_tolerant(actual.session)
                     _run_ruleset_tolerant(ruleset, new_txn)
-                    _fix_rule_note_casing(actual.session, new_txn)
                     _run_rules_on_transfer_counterparts(actual, new_txn, ruleset)
             except Exception as e:
                 log.error("Error applying rules: %s", e)

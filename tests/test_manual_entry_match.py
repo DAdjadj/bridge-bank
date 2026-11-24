@@ -54,11 +54,8 @@ class ManualEntryMatchTest(unittest.TestCase):
             patch.object(sync, "_actual_client", fake_client),
             patch.object(sync, "_get_session", return_value=(None, "uid")),
             patch.object(sync, "resolve_actual_account", return_value=self.account),
-            patch.object(sync, "_patch_payee_name_rules"),
-            patch.object(sync, "_patch_action_note_casing"),
             patch.object(sync, "_load_ruleset_tolerant"),
             patch.object(sync, "_run_ruleset_tolerant"),
-            patch.object(sync, "_fix_rule_note_casing"),
             patch.object(sync, "_run_rules_on_transfer_counterparts"),
         ]
         for p in patches:
