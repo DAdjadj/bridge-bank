@@ -50,9 +50,72 @@ def _make_headers():
     token = jwt.encode(payload, key, algorithm="RS256", headers={"kid": _get_app_id()})
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
+# What we ask for when the bank allows it. Each bank (ASPSP) publishes its own
+# ceiling as maximum_consent_validity; Trade Republic's is 90 days, and asking
+# for more makes Enable Banking refuse /auth with a 422 (issue #26).
+DEFAULT_CONSENT_SECONDS = 180 * 24 * 3600
+# Asked for a little under the ceiling, so the seconds between computing
+# valid_until and Enable Banking checking it can never push us past it.
+CONSENT_MARGIN_SECONDS = 3600
+
+_CONSENT_LIMIT_RE = re.compile(r"consent validity more than (\d+) seconds", re.I)
+
+
+def aspsp_max_consent_seconds(bank_name: str, bank_country: str):
+    """The bank's own consent ceiling in seconds, or None when unknown.
+
+    Never raises: a failed lookup falls back to the default and the
+    422 retry in start_auth still catches a lower limit.
+    """
+    try:
+        r = requests.get(f"{EB_API}/aspsps", params={"country": bank_country},
+                         headers=_make_headers(), timeout=20)
+        r.raise_for_status()
+        for b in r.json().get("aspsps", []):
+            if b.get("name") == bank_name and (b.get("country") or bank_country) == bank_country:
+                value = b.get("maximum_consent_validity")
+                return int(value) if value else None
+    except Exception as e:
+        logger.warning("Could not read the consent limit for %s (%s): %s", bank_name, bank_country, e)
+    return None
+
+
+def consent_seconds(max_seconds) -> int:
+    """How long to ask the bank for: the default, capped by the bank's ceiling."""
+    if not max_seconds or max_seconds <= 0:
+        return DEFAULT_CONSENT_SECONDS
+    return min(DEFAULT_CONSENT_SECONDS, max(max_seconds - CONSENT_MARGIN_SECONDS, 24 * 3600))
+
+
+def _valid_until(seconds: int) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + seconds))
+
+
+def eb_error_text(r) -> str:
+    """Enable Banking's own reason from an error response, short and plain."""
+    try:
+        data = r.json()
+        if isinstance(data, dict):
+            parts = [str(data[k]) for k in ("message", "detail", "error") if data.get(k)]
+            if parts:
+                return " ".join(dict.fromkeys(parts))[:300]
+    except Exception:
+        pass
+    return (r.text or "").strip()[:300]
+
+
+def _post_auth(body: dict):
+    r = requests.post(f"{EB_API}/auth", json=body, headers=_make_headers(), timeout=30)
+    if r.status_code >= 400:
+        reason = eb_error_text(r)
+        logger.warning("Enable Banking refused /auth (%s): %s", r.status_code, reason or "(no detail)")
+    return r
+
+
 def start_auth(bank_name: str, bank_country: str, psu_type: str = "") -> dict:
     from . import relay
-    valid_until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 180 * 24 * 3600))
+    max_seconds = aspsp_max_consent_seconds(bank_name, bank_country)
+    valid_until = _valid_until(consent_seconds(max_seconds))
     state_val   = str(uuid.uuid4())
     # The "auth2" prefix tells the bridgebank.app callback page this instance
     # can complete the auth through the relay, so the page can encrypt and
@@ -83,9 +146,23 @@ def start_auth(bank_name: str, bank_country: str, psu_type: str = "") -> dict:
     else:
         db.set_setting("pending_relay_privkey", "")
         db.set_setting("pending_relay_pubkey", "")
-    logger.info("Starting auth for %s (%s) with psu_type=%s", bank_name, bank_country, body["psu_type"])
-    r = requests.post(f"{EB_API}/auth", json=body, headers=_make_headers())
-    r.raise_for_status()
+    logger.info("Starting auth for %s (%s) with psu_type=%s, valid_until=%s",
+                bank_name, bank_country, body["psu_type"], valid_until)
+    r = _post_auth(body)
+    if r.status_code == 422:
+        # The bank's published ceiling was missing or out of date. Enable
+        # Banking names the real one in its reason; ask once more under it.
+        m = _CONSENT_LIMIT_RE.search(eb_error_text(r))
+        if m:
+            valid_until = _valid_until(consent_seconds(int(m.group(1))))
+            body["access"] = {"valid_until": valid_until}
+            db.set_setting("pending_session_valid_until", valid_until)
+            logger.info("Retrying auth for %s (%s) with valid_until=%s", bank_name, bank_country, valid_until)
+            r = _post_auth(body)
+    if r.status_code >= 400:
+        reason = eb_error_text(r)
+        raise RuntimeError(f"Enable Banking refused the request ({r.status_code})"
+                           + (f": {reason}" if reason else ""))
     return {"url": r.json()["url"]}
 
 _IBAN_SHAPE = re.compile(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{8,30}$")
