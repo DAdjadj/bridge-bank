@@ -88,7 +88,7 @@
         <div class="acts">
           <a class="btn btn-accent" href="/bank">&larr; Manage banks</a>
           <button class="btn{% if update_available %} btn-green{% endif %}" id="update-btn" onclick="runUpdate()">{% if update_available %}Update available{% else %}Check for updates{% endif %}</button>
-          <button class="btn" id="download-logs-btn" onclick="downloadLogs()">Download logs</button>
+          <a class="btn" href="/diagnostics">Diagnostics</a>
           {% if activation_usage > 0 %}
           <form method="POST" action="/settings/deactivate" onsubmit="return confirm('This will deactivate your license on this machine. You can re-enter your key to reactivate. Continue?');">
             <button type="submit" class="text-btn danger">Deactivate license ({{ activation_usage }}/{{ activation_limit }})</button>

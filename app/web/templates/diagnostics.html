@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics - Bridge Bank{% endblock %}
+{% block content %}
+<div class="ov diag">
+  <section class="cardx">
+    <div class="card-head"><h2><i class="chip c-blue"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg></i>About this Bridge Bank</h2>
+      <button class="text-btn" id="copy-facts" type="button">Copy</button></div>
+    <div class="facts" id="facts"><div class="set-row"><span>Reading...</span><span></span></div></div>
+    <div class="hint">Kept on your server only. The log records what Bridge Bank did, with counts and times, never IBANs, payees, amounts or keys. Download log also holds the app's own technical lines, with server addresses and bank session IDs, for support.</div>
+  </section>
+
+  <section class="cardx">
+    <div class="card-head"><h2><i class="chip c-violet"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h6"/></svg></i>Detailed log <span class="head-note">off again after 24 h</span></h2></div>
+    <div class="sw-wrap" id="switches">
+      {% for s in switches %}
+      <label class="set-row"><span>{{ s.title }}<small data-hint="{{ s.hint }}">{{ s.hint }}{% if s.until %}{% if s.hint %}. {% endif %}{{ s.until }}{% endif %}</small></span>
+        <input type="checkbox" class="switch-input" data-area="{{ s.area }}" {% if s.on %}checked{% endif %}><span class="switch"></span></label>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="cardx">
+    <div class="card-head"><h2><i class="chip c-green"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></i>Log</h2>
+      <div class="log-acts">
+        <button class="text-btn" id="copy-log" type="button">Copy log</button>
+        <button class="text-btn" id="download-log" type="button">Download log</button>
+        <button class="text-btn danger" id="clear-log" type="button">Clear</button>
+      </div></div>
+    <div class="logbar"><input id="log-filter" type="search" placeholder="Filter" autocomplete="off" aria-label="Filter the log"></div>
+    <div class="pills" id="pills">
+      <button type="button" class="on" data-area="">All</button><button type="button" data-area="Sync">Sync</button><button type="button" data-area="Bank">Bank</button><button type="button" data-area="Actual">Actual</button><button type="button" data-area="Email">Email</button><button type="button" data-area="License">License</button><button type="button" data-area="Error">Errors</button>
+    </div>
+    <div class="diaglog" id="diaglog">Reading the log...</div>
+  </section>
+</div>
+<script>
+(function() {
+  var facts = [], lines = [], area = '', query = '';
+  var logEl = document.getElementById('diaglog');
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function pad(s) { return (s + '         ').slice(0, Math.max(9, s.length + 1)); }
+
+  function visible() {
+    var q = query.toLowerCase();
+    return lines.filter(function(l) {
+      if (area && l[1] !== area) return false;
+      return !q || (l[0] + ' ' + l[1] + ' ' + l[2]).toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  // The whole log is drawn as one block, built once per change.
+  function render() {
+    var shown = visible();
+    if (!shown.length) {
+      logEl.innerHTML = '<span>' + (lines.length ? 'No lines match.' : 'Nothing logged since the last Clear.') + '</span>';
+      return;
+    }
+    var out = new Array(shown.length);
+    for (var i = 0; i < shown.length; i++) {
+      var l = shown[i];
+      out[i] = l[1] === 'Error'
+        ? '<span class="err">' + esc(l[0]) + '</span>  <span class="err">' + esc(pad(l[1]) + l[2]) + '</span>'
+        : '<span>' + esc(l[0]) + '</span>  ' + esc(pad(l[1]) + l[2]);
+    }
+    logEl.innerHTML = out.join('\n');
+  }
+
+  function renderFacts() {
+    var html = '';
+    for (var i = 0; i < facts.length; i++) {
+      html += '<div class="set-row"><span>' + esc(facts[i][0]) + '</span><span>' + esc(facts[i][1]) + '</span></div>';
+    }
+    document.getElementById('facts').innerHTML = html;
+  }
+
+  function factsText() {
+    return 'About this Bridge Bank\n' + facts.map(function(f) { return f[0] + ': ' + f[1]; }).join('\n');
+  }
+  function logText() {
+    return factsText() + '\n\nLog\n' + visible().map(function(l) { return l[0] + '  ' + pad(l[1]) + l[2]; }).join('\n') + '\n';
+  }
+
+  // Servers reached over plain http (a home network address) have no
+  // clipboard API, so the old way is tried too.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function() { return true; }, function() { return fallbackCopy(text); });
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+  function fallbackCopy(text) {
+    var area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    area.remove();
+    return ok;
+  }
+  function flash(btn, text) {
+    var was = btn.getAttribute('data-label') || btn.textContent;
+    btn.setAttribute('data-label', was);
+    btn.textContent = text;
+    setTimeout(function() { btn.textContent = was; }, 1600);
+  }
+  function copyButton(id, read) {
+    var btn = document.getElementById(id);
+    btn.addEventListener('click', function() {
+      copyText(read()).then(function(ok) { flash(btn, ok ? 'Copied' : "Couldn't copy"); });
+    });
+  }
+  copyButton('copy-facts', factsText);
+  copyButton('copy-log', logText);
+
+  document.getElementById('download-log').addEventListener('click', function() {
+    var btn = this;
+    btn.textContent = 'Fetching...';
+    btn.disabled = true;
+    fetch('/api/logs?lines=1000').then(function(r) { return r.json(); }).then(function(data) {
+      if (!data.logs) return;
+      var blob = new Blob([data.logs], { type: 'text/plain' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      var now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = 'bridge-bank-logs-' + now + '-' + (data.version || 'unknown') + '.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }).catch(function() {}).then(function() {
+      btn.textContent = 'Download log';
+      btn.disabled = false;
+    });
+  });
+
+  document.getElementById('clear-log').addEventListener('click', function() {
+    if (!confirm('Hide every line logged so far? The log file stays whole for support.')) return;
+    fetch('/api/diagnostics/clear', { method: 'POST' }).then(function() { lines = []; render(); });
+  });
+
+  document.getElementById('log-filter').addEventListener('input', function() { query = this.value; render(); });
+
+  document.getElementById('pills').addEventListener('click', function(e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    area = b.getAttribute('data-area');
+    this.querySelectorAll('button').forEach(function(x) { x.classList.toggle('on', x === b); });
+    render();
+  });
+
+  function showSwitches(list) {
+    list.forEach(function(s) {
+      var input = document.querySelector('#switches input[data-area="' + s.area + '"]');
+      if (!input) return;
+      input.checked = s.on;
+      var small = input.closest('label').querySelector('small');
+      var hint = small.getAttribute('data-hint');
+      small.textContent = hint + (s.until ? (hint ? '. ' : '') + s.until : '');
+    });
+  }
+  document.getElementById('switches').addEventListener('change', function(e) {
+    var input = e.target;
+    if (!input.matches('input[data-area]')) return;
+    fetch('/api/diagnostics/detailed', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ area: input.getAttribute('data-area'), on: input.checked })
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.switches) showSwitches(data.switches);
+      load();
+    }).catch(function() { input.checked = !input.checked; });
+  });
+
+  function load() {
+    fetch('/api/diagnostics').then(function(r) { return r.json(); }).then(function(data) {
+      facts = data.facts || [];
+      lines = data.lines || [];
+      renderFacts();
+      showSwitches(data.switches || []);
+      render();
+    }).catch(function() {
+      logEl.innerHTML = '<span>Could not read the log. Reload the page to try again.</span>';
+    });
+  }
+  load();
+})();
+</script>
+{% endblock %}

@@ -1,27 +1,4 @@
 <script>
-async function downloadLogs() {
-  var btn = document.getElementById('download-logs-btn');
-  btn.textContent = 'Fetching...';
-  btn.disabled = true;
-  try {
-    var resp = await fetch('/api/logs?lines=500');
-    var data = await resp.json();
-    if (data.logs) {
-      var blob = new Blob([data.logs], { type: 'text/plain' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      var now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.download = 'bridge-bank-logs-' + now + '-' + (data.version || 'unknown') + '.txt';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    }
-  } catch(e) {}
-  btn.textContent = 'Download logs';
-  btn.disabled = false;
-}
-
 async function runUpdate() {
   const btn = document.getElementById('update-btn');
   const status = document.getElementById('update-status');

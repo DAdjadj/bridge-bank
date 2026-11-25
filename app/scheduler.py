@@ -4,7 +4,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from . import config, db, sync, email_notify
+from . import config, db, diag, sync, email_notify
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def _should_catchup(frequency_hours) -> bool:
 def _run_sync():
     logger.info("Scheduled sync triggered at %s", datetime.now().isoformat())
     try:
-        sync.run()
+        sync.run(trigger="schedule")
     except Exception as e:
         # sync.run() handles its own errors and emails; this only catches
         # unexpected crashes. Without it, the exception would propagate into
@@ -88,6 +88,7 @@ def start():
 
     if frequency == 0:
         logger.info("Scheduler disabled (manual only mode)")
+        diag.note("Sync", "Schedule: manual only")
         return
 
     logger.info("Scheduler starting. Sync at %s, every %dh, timezone %s",
@@ -106,8 +107,10 @@ def start():
     if len(utc_times) > 1:
         logger.info("Sync times: %s", ", ".join(utc_times))
 
+    diag.note("Sync", f"Schedule: every {frequency} hours from {diag.clock_text(sync_time)}")
     if _should_catchup(frequency):
         logger.info("Catch-up sync needed. Running now.")
+        diag.note("Sync", "Missed a scheduled sync, catching up now")
         threading.Thread(target=_run_sync, daemon=True).start()
 
     # Start the loop thread, or revive it if it died. Checking is_alive()

@@ -44,7 +44,7 @@ class FetchFailureMessageTest(unittest.TestCase):
             _http_error(422, body={"message": "Session status is not authorized"}))
         self.assertIn("error 422", msg)
         self.assertIn("Session status is not authorized", msg)
-        self.assertIn("send your logs", msg)
+        self.assertIn("send your log from the Diagnostics page", msg)
 
     def test_bank_side_refusal_does_not_send_users_to_reconnect(self):
         # A non-401/403 refusal is the bank rejecting the request, so a fresh
@@ -179,7 +179,7 @@ class RevokedConsentTest(unittest.TestCase):
                 "ING (NL) → ING Prive",
                 _http_error(422, body={"message": "Session status is not authorized"}))
         get.assert_not_called()
-        self.assertIn("send your logs", msg)
+        self.assertIn("send your log from the Diagnostics page", msg)
         self.assertNotIn("Re-authorize", msg)
 
     def test_nested_detail_reader_handles_every_shape(self):

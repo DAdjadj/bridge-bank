@@ -2,7 +2,7 @@ import re, time, uuid, logging, requests
 from datetime import datetime, timezone
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 import jwt
-from . import config, db
+from . import config, db, diag
 
 logger  = logging.getLogger(__name__)
 EB_API  = "https://api.enablebanking.com"
@@ -70,6 +70,7 @@ def aspsp_max_consent_seconds(bank_name: str, bank_country: str):
     try:
         r = requests.get(f"{EB_API}/aspsps", params={"country": bank_country},
                          headers=_make_headers(), timeout=20)
+        diag.detail("Bank", f"GET /aspsps ({bank_country}): HTTP {r.status_code}")
         r.raise_for_status()
         for b in r.json().get("aspsps", []):
             if b.get("name") == bank_name and (b.get("country") or bank_country) == bank_country:
@@ -77,6 +78,8 @@ def aspsp_max_consent_seconds(bank_name: str, bank_country: str):
                 return int(value) if value else None
     except Exception as e:
         logger.warning("Could not read the consent limit for %s (%s): %s", bank_name, bank_country, e)
+        diag.note("Bank", f"{bank_name}: could not read the bank's consent limit ({type(e).__name__}), "
+                          "asking for the usual length")
     return None
 
 
@@ -106,6 +109,7 @@ def eb_error_text(r) -> str:
 
 def _post_auth(body: dict):
     r = requests.post(f"{EB_API}/auth", json=body, headers=_make_headers(), timeout=30)
+    diag.detail("Bank", f"POST /auth: HTTP {r.status_code}")
     if r.status_code >= 400:
         reason = eb_error_text(r)
         logger.warning("Enable Banking refused /auth (%s): %s", r.status_code, reason or "(no detail)")
@@ -149,20 +153,26 @@ def start_auth(bank_name: str, bank_country: str, psu_type: str = "") -> dict:
     logger.info("Starting auth for %s (%s) with psu_type=%s, valid_until=%s",
                 bank_name, bank_country, body["psu_type"], valid_until)
     r = _post_auth(body)
+    asked = consent_seconds(max_seconds)
     if r.status_code == 422:
         # The bank's published ceiling was missing or out of date. Enable
         # Banking names the real one in its reason; ask once more under it.
         m = _CONSENT_LIMIT_RE.search(eb_error_text(r))
         if m:
-            valid_until = _valid_until(consent_seconds(int(m.group(1))))
+            asked = consent_seconds(int(m.group(1)))
+            valid_until = _valid_until(asked)
             body["access"] = {"valid_until": valid_until}
             db.set_setting("pending_session_valid_until", valid_until)
             logger.info("Retrying auth for %s (%s) with valid_until=%s", bank_name, bank_country, valid_until)
+            diag.note("Bank", f"{bank_name}: the bank allows less, asking again for {asked // 86400} days")
             r = _post_auth(body)
     if r.status_code >= 400:
+        diag.problem("Bank", f"{bank_name}: consent request refused (HTTP {r.status_code})")
         reason = eb_error_text(r)
         raise RuntimeError(f"Enable Banking refused the request ({r.status_code})"
                            + (f": {reason}" if reason else ""))
+    capped = asked < DEFAULT_CONSENT_SECONDS
+    diag.note("Bank", f"{bank_name}: consent asks for {asked // 86400} days" + (" (bank's limit)" if capped else ""))
     return {"url": r.json()["url"]}
 
 _IBAN_SHAPE = re.compile(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{8,30}$")
@@ -217,6 +227,7 @@ def fetch_account_iban(account_uid: str, psu_ip: str = "", psu_user_agent: str =
     if psu_user_agent:
         headers["Psu-User-Agent"] = psu_user_agent[:255]
     r = requests.get(f"{EB_API}/accounts/{account_uid}/details", headers=headers, timeout=20)
+    diag.detail("Bank", f"GET /accounts/<account>/details: HTTP {r.status_code}")
     r.raise_for_status()
     return account_iban(r.json())
 
@@ -225,6 +236,7 @@ def complete_auth(code: str, state: str) -> dict:
     # Strip embedded BRIDGE_BANK_URL from state before sending to Enable Banking
     clean_state = state.split("|")[-1] if "|" in state else state
     r = requests.post(f"{EB_API}/sessions", json={"code": code, "state": clean_state}, headers=_make_headers())
+    diag.detail("Bank", f"POST /sessions: HTTP {r.status_code}")
     r.raise_for_status()
     data       = r.json()
     session_id = data["session_id"]
@@ -247,6 +259,7 @@ def get_session(session_id: str) -> dict:
     whenever a second is created, so at those banks starting a fresh auth to
     repair one account is what breaks the next one."""
     r = requests.get(f"{EB_API}/sessions/{session_id}", headers=_make_headers(), timeout=30)
+    diag.detail("Bank", f"GET /sessions/<session>: HTTP {r.status_code}")
     r.raise_for_status()
     data = r.json()
     accounts = []
