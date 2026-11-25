@@ -107,23 +107,23 @@ def activate(key, replace_others=False):
     try:
         resp, data = _post_json("/activate", payload)
         if resp.status_code in (200, 201) and data.get("valid"):
-            diag.note("License", "Activated on this machine" + (", other machines released" if replace_others else ""))
+            diag.note_change("licence-activate", "License", "Activated on this machine" + (", other machines released" if replace_others else ""))
             db.set_setting("licence_key", key)
             if data.get("removed_activations"):
                 logger.info("Released %s activation(s) and %s bank slot(s) from previous installations",
                             data.get("removed_activations"), data.get("removed_seats"))
             return {"valid": True, "error": None}
         elif resp.status_code == 409:
-            diag.problem("License", "Activation refused (HTTP 409), every machine slot is taken")
+            diag.note_change("licence-activate", "Error", "License: activation refused (HTTP 409), every machine slot is taken")
             msg = data.get("error") or "Activation limit reached for this license."
             return {"valid": False, "error": msg, "limit_reached": bool(data.get("limit_reached"))}
         else:
-            diag.problem("License", f"Activation refused (HTTP {resp.status_code})")
+            diag.note_change("licence-activate", "Error", f"License: activation refused (HTTP {resp.status_code})")
             msg = data.get("error") or "Invalid license key."
             return {"valid": False, "error": msg}
     except requests.RequestException as e:
         logger.warning("License activate failed (network): %s", e)
-        diag.problem("License", f"Activation: license server not reachable ({type(e).__name__})")
+        diag.note_change("licence-activate", "Error", f"License: activation, license server not reachable ({type(e).__name__})")
         # Allow offline only if this key was previously activated successfully
         if db.get_setting("licence_key") == key:
             return {"valid": True, "error": None, "offline": True}
@@ -273,14 +273,15 @@ def sync_bank_seats(accounts, key=None):
     try:
         resp, data = _post_json("/bank-seats/sync", payload)
         if resp.status_code == 200:
+            diag.note_change("bank-slots", "License", f"Bank slots: {data.get('used')} of {data.get('limit')} in use")
             return {
                 "ok": True,
                 "used": data.get("used"),
                 "limit": data.get("limit"),
                 "other_machine_seats": data.get("other_machine_seats", 0),
             }
-        diag.problem("License", f"Bank slots refused (HTTP {resp.status_code}), "
-                                f"{data.get('used')} of {data.get('limit')} in use")
+        diag.note_change("bank-slots", "Error", f"License: bank slots refused (HTTP {resp.status_code}), "
+                                                f"{data.get('used')} of {data.get('limit')} in use")
         return {
             "ok": False,
             "error": data.get("error") or "Could not verify bank slots for this license.",

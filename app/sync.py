@@ -2043,7 +2043,18 @@ def _note_sync_done(result, seconds, trigger, crash=None):
             diag.problem("Sync", f"Stopped by an unexpected error ({type(crash).__name__}), {secs}")
             text = "Stopped by an unexpected error"
         elif not tried:
-            reason = (result[2] if result and len(result) > 2 else "") or "nothing to sync"
+            reason = (result[2] if result and len(result) > 2 else "") or ""
+            # Fixed words: the license server's own error text stays out.
+            if reason.startswith("License invalid"):
+                reason = "the license check failed"
+            elif "No bank connection" in reason:
+                reason = "no bank connected"
+            elif "no longer exists" in reason:
+                reason = "that bank account no longer exists"
+            elif "limit" in reason.lower():
+                reason = "the license's bank slot limit is reached"
+            else:
+                reason = "nothing synced"
             text = f"Stopped: {reason}"
             diag.note("Sync", f"{text}, {secs}")
         else:

@@ -35,7 +35,7 @@ DETAILED = {
     "Bank": ("Bank connection", "Each Enable Banking request and its answer code"),
     "Actual": ("Writing to Actual Budget", "Matching, rules and transfers, as counts"),
     "Email": ("Email", "Each mail sent and the server's answer"),
-    "License": ("License and updates", "Each license and update check and its answer code"),
+    "License": ("License and updates", ""),
 }
 DETAIL_LASTS = 24 * 3600
 

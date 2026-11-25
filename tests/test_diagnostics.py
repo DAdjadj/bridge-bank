@@ -201,6 +201,53 @@ class DiagLinesFromTheAppTest(unittest.TestCase):
             self.assertNotIn(secret, line)
 
 
+class FactsTest(unittest.TestCase):
+    """The facts that reach outside: never the Actual address."""
+    def _actual(self, **get):
+        from unittest.mock import MagicMock
+        with patch.object(server.config, "ACTUAL_URL", ACTUAL_URL), \
+             patch("requests.get", **get) as fake:
+            text = server._fact_actual()
+        self.assertNotIn("alexdoe", text)
+        self.assertNotIn("5006", text)
+        return text, fake
+
+    def test_actual_reachable(self):
+        from unittest.mock import MagicMock
+        answer = MagicMock(status_code=200)
+        answer.json.return_value = {"build": {"version": "26.3.0"}}
+        text, fake = self._actual(return_value=answer)
+        self.assertTrue(text.startswith("Reachable, Actual 26.3.0, actualpy "))
+        self.assertEqual(fake.call_args.args[0], ACTUAL_URL + "/info")
+
+    def test_actual_answers_with_an_error(self):
+        from unittest.mock import MagicMock
+        text, _ = self._actual(return_value=MagicMock(status_code=502))
+        self.assertTrue(text.startswith("Not reachable (HTTP 502), actualpy "))
+
+    def test_actual_not_reachable(self):
+        import requests
+        text, _ = self._actual(side_effect=requests.ConnectionError(f"Max retries for {ACTUAL_URL}/info"))
+        self.assertTrue(text.startswith("Not reachable (ConnectionError), actualpy "))
+
+    def test_memory_from_proc(self):
+        from unittest.mock import mock_open
+        with patch("builtins.open", mock_open(read_data="Name:\tpython\nVmRSS:\t  120832 kB\n")):
+            self.assertEqual(server._memory_now(), "118 MB")
+
+    def test_stopped_sync_uses_fixed_words(self):
+        from app import sync
+        capture = Capture()
+        logging.getLogger("app.diag").addHandler(capture)
+        try:
+            with patch.object(sync, "_run", return_value=(False, 0, "License invalid: key lic-SECRET-KEY expired")):
+                sync.run(trigger="schedule")
+        finally:
+            logging.getLogger("app.diag").removeHandler(capture)
+        self.assertRegex(capture.lines[-1], r"Sync: Stopped: the license check failed, \d+ s$")
+        self.assertNotIn("lic-SECRET-KEY", appdb.get_setting("diag_last_sync"))
+
+
 class DiagnosticsPageTest(unittest.TestCase):
     def setUp(self):
         _reset_settings()
