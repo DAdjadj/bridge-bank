@@ -59,7 +59,7 @@ Enable Banking is the regulated open banking provider that connects Bridge Bank 
 6. Select your country and bank from the dropdowns and click **Link**
 7. Follow the steps to log in to your bank and approve read-only access — this activates your Enable Banking app
 
-> **A consent of only 1 day here is normal.** This step is Enable Banking's own consent, used only to activate your application. The connection that actually syncs is made later inside Bridge Bank, which asks your bank for up to 180 days; its expiry date shows next to each account on the Bank page.
+> **A consent of only 1 day here is normal.** This step is Enable Banking's own consent, used only to activate your application. The connection that actually syncs is made later inside Bridge Bank, which asks your bank for up to 180 days (less when the bank allows less, such as Trade Republic's 90); its expiry date shows next to each account on the Bank page.
 
 > **The mode is permanent.** Enable Banking asks for Sandbox or Production at the top of the registration form, and applications cannot be moved between the two afterward. A Sandbox application only returns simulated test data, so it will never connect to your real bank. If you already registered one in Sandbox, register a second application in Production and use that one.
 
@@ -157,7 +157,7 @@ Each connected bank has two toggles on its card on the Banks page:
 
 ## Session renewal (every ~180 days)
 
-Enable Banking requires you to re-authorize access roughly every 6 months. If you configured email notifications, you will receive a warning before expiry.
+Enable Banking requires you to re-authorize access roughly every 6 months. Some banks allow less: Bridge Bank asks each bank for the longest it allows, so a bank such as Trade Republic (90 days) needs renewing every 3 months. If you configured email notifications, you will receive a warning before expiry.
 
 To re-authorize, go to the **Bank** tab in the Bridge Bank web UI and click **Re-authorize bank**.
 
