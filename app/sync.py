@@ -1,6 +1,6 @@
 import contextlib, os, json, sys, threading, time, logging, datetime, decimal, requests
 
-from . import config, db, email_notify, enablebanking, licence
+from . import config, db, diag, email_notify, enablebanking, licence
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -11,6 +11,13 @@ log = logging.getLogger(__name__)
 # holder's IP address and browser counts as the holder asking, so a manual
 # sync doesn't use up what the scheduled ones need. Scheduled syncs send none.
 _holder = threading.local()
+# Counts for the Diagnostics page's "Done" line, one set per running sync.
+_stats = threading.local()
+
+def _count(name, n=1):
+    counts = getattr(_stats, "counts", None)
+    if counts is not None:
+        counts[name] = counts.get(name, 0) + n
 
 
 def holder_headers(ip, user_agent):
@@ -99,6 +106,9 @@ def _attach_actual_diagnostics(actual, label):
     def on_response(response):
         started = response.request.extensions.get("bridge_bank_started_at")
         elapsed = f" in {time.monotonic() - started:.1f}s" if started else ""
+        url = getattr(response.request, "url", None)
+        diag.detail("Actual", f"{getattr(response.request, 'method', '')} {getattr(url, 'path', '') or '/'}: "
+                              f"HTTP {response.status_code}" + (f" ({time.monotonic() - started:.1f} s)" if started else ""))
         log.info(
             "%s: Actual HTTP response: %s %s%s",
             label,
@@ -132,6 +142,7 @@ def _actual_phase(label, phase):
         raise
     else:
         log.info("%s: Actual phase completed: %s in %.1fs", label, phase, time.monotonic() - started)
+        diag.detail("Actual", f"{phase.capitalize()}: done in {time.monotonic() - started:.1f} s")
 
 @contextlib.contextmanager
 def _actual_client(label):
@@ -420,7 +431,10 @@ def _fetch_transactions_once(account_uid, date_from, use_strategy=True, extra_he
         if page > 0:
             time.sleep(1)
         for attempt in range(4):
+            asked = time.monotonic()
             r = requests.get(url, headers=headers, params=params, timeout=30)
+            diag.detail("Bank", f"GET /accounts/<account>/transactions page {page + 1}: HTTP {r.status_code} "
+                                f"({time.monotonic() - asked:.1f} s)")
             # 5xx from Enable Banking is a brief upstream problem, same as 429.
             if r.status_code == 429 or r.status_code >= 500:
                 wait = min(2 ** attempt * 5, 60)
@@ -608,6 +622,27 @@ def _bank_has_newer_session(account):
                                 session_accounts, held)
     return targets is None or bool(targets)
 
+def _error_kind(exc):
+    """'HTTP 502' or the error's class name: never its text, which can hold
+    a server address or an account id."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int) and status:
+        return f"HTTP {status}"
+    return type(exc).__name__
+
+def _bank_problem(bank, exc):
+    """The Diagnostics line for a failed transactions request."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", 0) or 0
+    if status == 429:
+        return f"{bank} HTTP 429, will try again at the next sync"
+    if status in (401, 403):
+        return f"{bank} HTTP {status}, the bank session needs renewing"
+    if status:
+        return f"{bank} HTTP {status}, will try again at the next sync"
+    return f"{bank}: could not reach the bank ({type(exc).__name__}), will try again at the next sync"
+
 def _fetch_failure_message(bank_label, exc, account=None):
     """User-facing sync-log message for a failed Enable Banking fetch.
 
@@ -643,7 +678,7 @@ def _fetch_failure_message(bank_label, exc, account=None):
         return (f"{bank_label}: Your bank refused the request (error {status}{detail}). "
                 "This is a fault at the bank rather than an expired login, so reconnecting "
                 "will not clear it. Bridge Bank will retry on the next scheduled sync. If it "
-                "keeps repeating, send your logs from the Status page to support@bridgebank.app.")
+                "keeps repeating, send your log from the Diagnostics page to support@bridgebank.app.")
     return (f"{bank_label}: Could not reach your bank's API ({type(exc).__name__}). "
             "Bridge Bank will retry on the next scheduled sync.")
 
@@ -1597,7 +1632,9 @@ def _sync_balance_account(account):
     except Exception as e:
         msg = f"{bank_label}: Could not fetch balance from {provider.display_name}: {e}"
         log.error(msg)
+        diag.problem("Bank", f"{provider.display_name}: balance not read ({_error_kind(e)})")
         return False, 0, msg
+    diag.note("Bank", f"{provider.display_name}: balance read")
 
     def write_balance_to_actual():
         from actual.queries import get_transactions, create_transaction
@@ -1645,8 +1682,11 @@ def _sync_balance_account(account):
     except Exception as e:
         msg = f"{bank_label}: Could not connect to Actual Budget: {e}"
         log.error(msg)
+        diag.problem("Actual", f"{provider.display_name}: could not write the balance ({_error_kind(e)})")
         return False, 0, msg
 
+    diag.note("Actual", f"{provider.display_name}: balance {'adjusted' if tx_count else 'already right'}")
+    _count("new", tx_count)
     return True, tx_count, "OK"
 
 
@@ -1659,11 +1699,13 @@ def _sync_account(account, state):
     actual_name = account.get("actual_account", config.ACTUAL_ACCOUNT)
     bank_label = f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) \u2192 {actual_name}"
 
+    bank = account.get("bank_name") or "Bank"
     try:
         _, account_uid = _get_session(account)
     except RuntimeError as e:
         msg = str(e)
         log.error(msg)
+        diag.problem("Bank", f"{bank}: no active bank session, re-authorize it on the Bank page")
         return False, 0, msg
 
     # Per-account state
@@ -1684,12 +1726,15 @@ def _sync_account(account, state):
         if earliest < date_from:
             date_from = earliest
 
+    fetch_started = time.monotonic()
     try:
         raw = _fetch_transactions(account_uid, date_from)
     except requests.RequestException as e:
         msg = _fetch_failure_message(bank_label, e, account)
         log.error(msg)
+        diag.problem("Bank", _bank_problem(bank, e))
         return False, 0, msg
+    diag.note("Bank", f"{bank}: {len(raw)} transactions (HTTP 200, {time.monotonic() - fetch_started:.1f} s)")
 
     if not raw:
         log.info("No new transactions for %s", bank_label)
@@ -1702,10 +1747,12 @@ def _sync_account(account, state):
     imported_refs_start = set(acct_state.get("imported_refs", []))
     live_refs = {r for r in (_get_entry_ref(t) for t in raw) if r}
 
+    write_counts = {}
+
     def write_transactions_to_actual():
         pending_map = dict(pending_map_start)
         imported_refs = set(imported_refs_start)
-        added = updated = skipped = 0
+        added = updated = skipped = by_hand = 0
         from actual.queries import reconcile_transaction, get_transactions, create_transaction
 
         with _actual_client(bank_label) as actual:
@@ -1752,6 +1799,7 @@ def _sync_account(account, state):
                                     log.info("%s: matched a pending bank transaction to one added "
                                              "by hand; kept the existing copy", bank_label)
                                     updated += 1
+                                    by_hand += 1
                                     continue
                                 try:
                                     t = reconcile_transaction(
@@ -1839,6 +1887,7 @@ def _sync_account(account, state):
                                     log.info("%s: matched a bank transaction to one added "
                                              "by hand; kept the existing copy", bank_label)
                                     updated += 1
+                                    by_hand += 1
                                     continue
                                 try:
                                     t = reconcile_transaction(
@@ -1870,16 +1919,21 @@ def _sync_account(account, state):
             try:
                 with _actual_phase(bank_label, "apply Actual rules"):
                     ruleset = _load_ruleset_tolerant(actual.session)
+                    diag.detail("Actual", f"{len(ruleset.rules)} rules loaded, "
+                                          f"run on {len(new_txn)} new")
                     _run_ruleset_tolerant(ruleset, new_txn)
                     _run_rules_on_transfer_counterparts(actual, new_txn, ruleset)
             except Exception as e:
                 log.error("Error applying rules: %s", e)
+                diag.problem("Actual", f"{bank}: rules could not run ({type(e).__name__})")
 
             with _actual_phase(bank_label, "commit Actual transaction changes"):
                 actual.commit()
             log.info("Done %s: %d added, %d confirmed, %d skipped", bank_label, added, updated, skipped)
+            write_counts.update(skipped=skipped, by_hand=by_hand)
             return pending_map, imported_refs, added, updated
 
+    write_started = time.monotonic()
     try:
         pending_map, imported_refs, added, updated = _run_actual_with_retries(
             bank_label,
@@ -1888,11 +1942,20 @@ def _sync_account(account, state):
     except ActualAccountError as e:
         msg = f"{bank_label}: {e}"
         log.error(msg)
+        diag.problem("Actual", f"{bank}: the Actual account it syncs into can't be used as it stands")
         return False, 0, msg
     except Exception as e:
         msg = f"{bank_label}: Could not connect to Actual Budget at {config.ACTUAL_URL}. Error: {e}"
         log.error(msg)
+        diag.problem("Actual", f"{bank}: could not write to Actual Budget ({_error_kind(e)})")
         return False, 0, msg
+    by_hand = write_counts.get("by_hand", 0)
+    diag.note("Actual", f"{bank}: {added} new, {updated} confirmed, {write_counts.get('skipped', 0)} already there"
+                        + (f", {by_hand} matched to ones added by hand" if by_hand else "")
+                        + f" ({time.monotonic() - write_started:.1f} s)")
+    _count("new", added)
+    _count("confirmed", updated)
+    _count("by_hand", by_hand)
 
     # Only the bank references are kept, never the names: the transfer matcher
     # needs to know which transactions named someone, and the name is already
@@ -1942,19 +2005,66 @@ def bank_label(account):
         return f"{account.get('bank_name', account.get('provider', 'Unknown'))} → {actual_name}"
     return f"{account.get('bank_name', 'Unknown')} ({account.get('bank_country', '')}) → {actual_name}"
 
-def run(only_account_id=None, holder=None):
+def run(only_account_id=None, holder=None, trigger=None):
     """Sync all bank accounts, or just one when only_account_id is given.
 
     holder: PSU headers from holder_headers() when a person pressed Sync now.
+    trigger: words for the Diagnostics page ("schedule", "Sync now", ...).
     """
     _holder.headers = holder or {}
     if _holder.headers:
         # Support reads this to tell a Sync now from a scheduled sync.
         log.info("Sync asked for by the account holder: banks get their IP address and browser")
+    trigger = trigger or ("one account" if only_account_id is not None else "after a bank change")
+    _stats.counts = {}
+    started = time.monotonic()
+    diag.note("Sync", f"Started ({trigger})")
+    result = crash = None
     try:
-        return _run(only_account_id)
+        result = _run(only_account_id)
+        return result
+    except BaseException as e:
+        crash = e
+        raise
     finally:
         _holder.headers = {}
+        _note_sync_done(result, time.monotonic() - started, trigger, crash)
+        _stats.counts = None
+
+
+def _note_sync_done(result, seconds, trigger, crash=None):
+    """The Diagnostics page's line for a finished sync, and the summary its
+    Last sync row reads."""
+    try:
+        c = getattr(_stats, "counts", None) or {}
+        tried, failed = c.get("accounts", 0), c.get("failed", 0)
+        secs = f"{seconds:.0f} s"
+        if crash is not None:
+            diag.problem("Sync", f"Stopped by an unexpected error ({type(crash).__name__}), {secs}")
+            text = "Stopped by an unexpected error"
+        elif not tried:
+            reason = (result[2] if result and len(result) > 2 else "") or "nothing to sync"
+            text = f"Stopped: {reason}"
+            diag.note("Sync", f"{text}, {secs}")
+        else:
+            parts = [f"{tried - failed} of {tried} accounts fine" if failed else
+                     f"{tried} account{'s' if tried != 1 else ''}"]
+            parts.append(f"{c.get('new', 0)} new")
+            if c.get("confirmed"):
+                parts.append(f"{c['confirmed']} confirmed")
+            if c.get("by_hand"):
+                parts.append(f"{c['by_hand']} matched to ones added by hand")
+            if c.get("transfers"):
+                parts.append(f"{c['transfers']} transfers linked")
+            text = ("Done with problems: " if failed else "Done: ") + ", ".join(parts)
+            diag.note("Sync", f"{text}, {secs}")
+        db.set_setting("diag_last_sync", json.dumps({
+            "at": time.time(), "ok": crash is None and bool(tried) and not failed,
+            "accounts": tried, "failed": failed, "new": c.get("new", 0),
+            "seconds": round(seconds), "trigger": trigger, "text": diag.safe(text),
+        }))
+    except Exception:
+        log.debug("Could not note the finished sync", exc_info=True)
 
 
 def _run(only_account_id=None):
@@ -2051,11 +2161,15 @@ def _run(only_account_id=None):
     for i, account in enumerate(accounts_to_sync):
         label = bank_label(account)
         problem = account_problems.get(account.get("id"))
+        _count("accounts")
         if problem:
             msg = f"{label}: {problem}"
             log.error(msg)
             errors.append(msg)
             db.log_sync("failure", tx_count=0, message=msg)
+            _count("failed")
+            diag.problem("Actual", f"{account.get('bank_name') or 'Bank'}: the Actual account it syncs into "
+                                   "can't be used, see the Status page")
             continue
         if i > 0:
             time.sleep(2)
@@ -2068,10 +2182,13 @@ def _run(only_account_id=None):
             else:
                 errors.append(msg)
                 db.log_sync("failure", tx_count=0, message=msg)
+                _count("failed")
         except Exception as e:
             log.error("Unexpected error syncing %s: %s", label, e)
             errors.append(f"{label}: {e}")
             db.log_sync("failure", tx_count=0, message=f"{label}: {e}")
+            _count("failed")
+            diag.problem("Sync", f"{account.get('bank_name') or 'Bank'}: unexpected error ({type(e).__name__})")
 
     linked_transfers = 0
     # Run transfer-linking whenever at least one account synced successfully
@@ -2109,8 +2226,11 @@ def _run(only_account_id=None):
                 successes.append(
                     f"Internal transfers: {linked_transfers} linked"
                 )
+                _count("transfers", linked_transfers)
+            diag.detail("Actual", f"Internal transfers: {linked_transfers} linked")
         except Exception as e:
             log.error("Error auto-linking internal transfers: %s", e)
+            diag.problem("Actual", f"Linking internal transfers failed ({_error_kind(e)})")
 
     _save_state(state)
 
@@ -2124,8 +2244,8 @@ def _run(only_account_id=None):
     # Check for updates silently
     try:
         _check_for_update()
-    except Exception:
-        pass
+    except Exception as e:
+        diag.problem("License", f"Update check failed ({_error_kind(e)})")
 
     return len(errors) == 0, total_added, "OK" if not errors else msg
 
@@ -2144,6 +2264,7 @@ def _check_for_update():
         db.set_setting("update_available", "1" if available else "0")
         if available:
             log.info("Update available for %s (version tag check)", repo)
+        diag.note("License", "Update check: a newer version is out" if available else "Update check: up to date")
         return
     token_resp = _req.get(f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull", timeout=5)
     token = token_resp.json().get("token", "")
@@ -2190,5 +2311,7 @@ def _check_for_update():
 
     update_available = bool(remote_digests and local_digests and remote_digests.isdisjoint(local_digests))
     db.set_setting("update_available", "1" if update_available else "0")
+    diag.detail("License", f"Docker Hub manifest: HTTP {manifest_resp.status_code}")
+    diag.note("License", "Update check: a newer image is out" if update_available else "Update check: up to date")
     if update_available:
         log.info("Update available for %s", repo)

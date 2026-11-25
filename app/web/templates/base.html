@@ -23,6 +23,7 @@
         <a href="/setup/notifications" {% if active == 'notifications' %}class="active"{% endif %}>Notifications</a>
         <a href="/bank" {% if active == 'bank' %}class="active"{% endif %}>Bank</a>
         <a href="/status" {% if active == 'status' %}class="active"{% endif %}>Status{% if nav_health %}<span class="health-dot {{ 'bad' if nav_health == 'bad' }}" title="{{ 'An account failed on the last sync' if nav_health == 'bad' else 'Last sync went fine' }}"></span>{% endif %}</a>
+        <a href="/diagnostics" {% if active == 'diagnostics' %}class="active"{% endif %}>Diagnostics</a>
       </nav>
       <div class="sidebar-footer">
         <a href="mailto:support@david-alves.com">Support</a>

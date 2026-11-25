@@ -3,7 +3,7 @@ import re
 import threading
 from urllib.parse import quote
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from .. import config, db, licence, sync
+from .. import config, db, diag, licence, sync
 from ..log_redact import sanitize_logs
 
 logger = logging.getLogger(__name__)
@@ -1563,6 +1563,7 @@ def _complete_auth_from_code(code, state, source="web"):
         # The exchange itself failed, so the code may still be unused. Revert
         # to pending so the manual browser button or the poller can retry.
         logger.error("Bank auth exchange failed (%s): %s", source, e)
+        diag.problem("Bank", f"Consent could not be finished ({sync._error_kind(e)}), it can be tried again")
         db.set_setting("auth_flow_message", str(e))
         db.compare_and_swap_setting("auth_flow_status", "in_progress", "pending")
         return ("retryable", str(e))
@@ -1572,6 +1573,7 @@ def _complete_auth_from_code(code, state, source="web"):
             return _finish("error", NO_ACCOUNTS_ERROR)
         accounts = result["accounts"]
         logger.info("Auth completed via %s: %d account(s), session=%s", source, len(accounts), result["session_id"])
+        _note_consent_given(len(accounts), result.get("valid_until", ""))
         _remember_session_accounts(result["session_id"], accounts)
         if len(accounts) == 1:
             account_uid = accounts[0].get("uid") or accounts[0].get("account_uid") or accounts[0].get("resource_id")
@@ -1589,6 +1591,19 @@ def _complete_auth_from_code(code, state, source="web"):
         # record the real failure (for example a seat-limit error).
         logger.error("Bank auth completion failed after exchange (%s): %s", source, e)
         return _finish("error", str(e))
+
+def _note_consent_given(count, valid_until):
+    bank = db.get_setting("pending_bank_name") or "Bank"
+    until = ""
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        end = _dt.fromisoformat(str(valid_until).replace("Z", "+00:00"))
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=_tz.utc)
+        until = f", good until {diag.format_date(end.timestamp(), config.TIMEZONE)}"
+    except (TypeError, ValueError):
+        pass
+    diag.note("Bank", f"{bank}: consent given for {count} account{'s' if count != 1 else ''}{until}")
 
 def _relay_complete(code, state):
     return _complete_auth_from_code(code, state, source="relay")
@@ -1628,7 +1643,7 @@ def callback():
         # carry the bank's own refusal text, which is more use than the
         # generic wording.
         return redirect(url_for("bank") + "?error=" + quote(message or (GENERIC_CANCEL_MESSAGE + " Please try again.")))
-    return redirect(url_for("bank") + "?error=Bank connection failed: " + (message or "unknown error") + ". If this keeps happening, please download your logs from the Status page and send them to support@bridgebank.app.")
+    return redirect(url_for("bank") + "?error=Bank connection failed: " + (message or "unknown error") + ". If this keeps happening, please download your log from the Diagnostics page and send it to support@bridgebank.app.")
 
 def _account_uid_of(acct):
     return acct.get("uid") or acct.get("account_uid") or acct.get("resource_id")
@@ -2105,7 +2120,7 @@ def sync_now():
     def _run():
         global _sync_running
         try:
-            sync.run(holder=holder)
+            sync.run(holder=holder, trigger="Sync now")
         finally:
             _sync_running = False
     threading.Thread(target=_run, daemon=True).start()
@@ -2128,7 +2143,7 @@ def sync_account():
     def _run():
         global _sync_running
         try:
-            sync.run(only_account_id=aid, holder=holder)
+            sync.run(only_account_id=aid, holder=holder, trigger="Sync now, one account")
         finally:
             _sync_running = False
     threading.Thread(target=_run, daemon=True).start()
@@ -2285,6 +2300,186 @@ def api_logs():
         return jsonify({"error": str(e)}), 500
 
 # ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+def _read_log_text():
+    """Both log files in full (about 3 MB at most), oldest first."""
+    chunks = []
+    for path in (LOG_FILE + ".1", LOG_FILE):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                chunks.append(f.read())
+        except OSError:
+            continue
+    return "".join(chunks)
+
+def _memory_now():
+    """This process's resident memory, from /proc on Linux (the container)."""
+    try:
+        with open("/proc/self/status") as f:
+            for row in f:
+                if row.startswith("VmRSS:"):
+                    return f"{int(row.split()[1]) // 1024} MB"
+    except OSError:
+        pass
+    return "Unknown"
+
+def _fact_version():
+    arch, variant = _docker_arch()
+    where = "Docker" if os.path.exists("/.dockerenv") else "not in Docker"
+    import platform
+    return f"v{APP_VERSION} ({where}, {platform.system().lower()}/{arch}{'/' + variant if variant else ''})"
+
+def _fact_license():
+    if not config.LICENCE_KEY:
+        return "Not set up"
+    info = licence.get_activation_info()
+    if info.get("is_trial"):
+        ends = (info.get("expires_at") or "")[:10]
+        if ends:
+            from datetime import datetime as _dt, timezone as _tz
+            ends = diag.format_date(_dt.fromisoformat(ends).replace(tzinfo=_tz.utc).timestamp())
+        return f"Trial{', ends ' + ends if ends else ''}"
+    state = "Active" if db.get_setting("licence_validated") else "Not checked yet"
+    return f"{state}, {info.get('usage', 0)} of {info.get('limit', 0)} machines"
+
+def _fact_actual():
+    if not config.ACTUAL_URL:
+        return "Not set up"
+    from importlib.metadata import version as _pkg_version
+    try:
+        actualpy = f"actualpy {_pkg_version('actualpy')}"
+    except Exception:
+        actualpy = "actualpy unknown"
+    import requests as _requests
+    try:
+        r = _requests.get(config.ACTUAL_URL.rstrip("/") + "/info", timeout=4)
+    except Exception as e:
+        return f"Not reachable ({type(e).__name__}), {actualpy}"
+    if r.status_code != 200:
+        return f"Not reachable (HTTP {r.status_code}), {actualpy}"
+    try:
+        server_version = (r.json().get("build") or {}).get("version") or ""
+    except Exception:
+        server_version = ""
+    return f"Reachable{', Actual ' + server_version if server_version else ''}, {actualpy}"
+
+def _fact_accounts():
+    accounts = db.get_all_bank_accounts()
+    if not accounts:
+        return "None connected"
+    banks = {a.get("bank_name") or a.get("provider") or "" for a in accounts}
+    text = (f"{len(accounts)} account{'s' if len(accounts) != 1 else ''} at "
+            f"{len(banks)} bank{'s' if len(banks) != 1 else ''}")
+    ends = []
+    from datetime import datetime as _dt, timezone as _tz
+    for a in accounts:
+        try:
+            end = _dt.fromisoformat(str(a.get("session_expiry") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        ends.append(end if end.tzinfo else end.replace(tzinfo=_tz.utc))
+    if ends:
+        text += f", consent good until {diag.format_date(min(ends).timestamp(), config.TIMEZONE)}"
+    return text
+
+def _fact_last_sync():
+    import json as _json
+    try:
+        last = _json.loads(db.get_setting("diag_last_sync") or "{}")
+    except ValueError:
+        last = {}
+    if not last:
+        return "None since this update" if db.get_last_sync() else "No sync yet"
+    if last.get("ok"):
+        head = "All accounts fine"
+    elif last.get("accounts"):
+        head = f"{last.get('failed', 0)} of {last['accounts']} accounts failed"
+    else:
+        head = last.get("text") or "Stopped"
+    return (f"{head}, {last.get('new', 0)} new, {last.get('seconds', 0)} s, "
+            f"at {diag.format_when(last.get('at', 0), config.TIMEZONE)}")
+
+def _fact_next_sync():
+    frequency = config.sync_frequency()
+    if frequency == 0:
+        return "Manual only"
+    import schedule, time as _time
+    from .. import scheduler
+    idle = schedule.idle_seconds() if schedule.get_jobs() else None
+    if idle is None or not scheduler.is_alive():
+        return f"Not scheduled yet (every {frequency} hours)"
+    return f"{diag.format_when(_time.time() + max(idle, 0), config.TIMEZONE)} (every {frequency} hours)"
+
+_DIAG_FACTS = (
+    ("Version", _fact_version),
+    ("License", _fact_license),
+    ("Actual Budget", _fact_actual),
+    ("Bank accounts", _fact_accounts),
+    ("Last sync", _fact_last_sync),
+    ("Next sync", _fact_next_sync),
+    ("Memory now", _memory_now),
+)
+
+def _diag_facts():
+    """The About card. Each fact stands alone so one slow or failing check
+    can't take the page down. Never the Actual address, keys or the email."""
+    facts = []
+    for label, read in _DIAG_FACTS:
+        try:
+            value = read()
+        except Exception:
+            logger.debug("Diagnostics fact %s failed", label, exc_info=True)
+            value = "Unknown"
+        facts.append([label, diag.safe(value)])
+    return facts
+
+def _diag_switches():
+    import time as _time
+    now = _time.time()
+    out = []
+    for area, (title, hint) in diag.DETAILED.items():
+        until = diag.detailed_until(area, now)
+        out.append({
+            "area": area,
+            "title": title,
+            "hint": hint,
+            "on": until is not None,
+            "until": f"On until {diag.format_when(until, config.TIMEZONE, now)}" if until else "",
+        })
+    return out
+
+def _diag_lines():
+    lines = diag.parse(_read_log_text(), since=diag.cleared_at())
+    tz = config.TIMEZONE
+    return [[diag.format_time(at, tz), area, text] for at, area, text in lines]
+
+@app.route("/diagnostics")
+def diagnostics():
+    # No setup redirects: this page matters most when setup is what's failing.
+    return render_template("diagnostics.html", active="diagnostics", switches=_diag_switches())
+
+@app.route("/api/diagnostics")
+def api_diagnostics():
+    return jsonify({"facts": _diag_facts(), "lines": _diag_lines(), "switches": _diag_switches(),
+                    "version": APP_VERSION})
+
+@app.route("/api/diagnostics/detailed", methods=["POST"])
+def api_diagnostics_detailed():
+    data = request.get_json(silent=True) or {}
+    area = data.get("area")
+    if area not in diag.DETAILED:
+        return jsonify({"error": "Unknown area."}), 400
+    diag.set_detailed(area, bool(data.get("on")))
+    return jsonify({"switches": _diag_switches()})
+
+@app.route("/api/diagnostics/clear", methods=["POST"])
+def api_diagnostics_clear():
+    diag.clear()
+    return jsonify({"ok": True})
+
+# ---------------------------------------------------------------------------
 # Banks
 # ---------------------------------------------------------------------------
 
@@ -2305,6 +2500,7 @@ def update_check():
     version_available, latest = version_check.update_available_by_version(APP_VERSION, repo)
 
     if not os.path.exists("/var/run/docker.sock"):
+        diag.note("License", f"Update check: {'v' + latest + ' is out' if version_available else 'up to date'}")
         return jsonify({"available": version_available, "current": APP_VERSION, "latest": latest})
     try:
         import requests as _req
@@ -2335,9 +2531,11 @@ def update_check():
             version_available,
             available,
         )
+        diag.note("License", "Update check: a newer version is out" if available else "Update check: up to date")
         return jsonify({"available": available, "current": APP_VERSION, "latest": latest})
     except Exception as e:
         logger.warning("Update check failed: %s", e)
+        diag.problem("License", f"Update check failed ({sync._error_kind(e)})")
         return jsonify({"available": version_available, "current": APP_VERSION, "latest": latest})
 
 @app.route("/update/run", methods=["POST"])
@@ -2353,6 +2551,7 @@ def update_run():
         if resp.status_code in (404, 405):
             resp = _requests.get(url, headers=headers, timeout=120)
         logger.info("Watchtower update response: %s %s", resp.status_code, resp.text.strip())
+        diag.note("License", f"Update asked for (Watchtower answered HTTP {resp.status_code})")
         if resp.status_code in (200, 202):
             db.set_setting("update_available", "0")
             return jsonify({"updating": True})
@@ -2386,11 +2585,14 @@ def update_run():
         ], capture_output=True, text=True, timeout=15)
         if result.returncode != 0:
             logger.error("Failed to start update helper: %s", result.stderr.strip())
+            diag.problem("License", "Update could not start (helper container refused)")
             return jsonify({"error": "Failed to start update. Try running: docker compose pull && docker compose up -d"}), 500
         db.set_setting("update_available", "0")
+        diag.note("License", "Update started (helper container)")
         return jsonify({"updating": True})
     except Exception as e:
         logger.error("Fallback update failed: %s", e)
+        diag.problem("License", f"Update failed ({type(e).__name__})")
         return jsonify({"error": str(e)}), 500
 
 _banks_cache = None
@@ -2439,7 +2641,17 @@ def _start_scheduler_if_ready():
         except Exception as e:
             logger.warning("Could not start scheduler: %s", e)
 
+def _note_started():
+    import platform
+    try:
+        from importlib.metadata import version as _pkg_version
+        actualpy = _pkg_version("actualpy")
+    except Exception:
+        actualpy = "unknown"
+    diag.note("App", f"Started: Bridge Bank v{APP_VERSION}, Python {platform.python_version()}, actualpy {actualpy}")
+
 def start(host="0.0.0.0", port=3000):
+    _note_started()
     _start_scheduler_if_ready()
     try:
         from .. import relay

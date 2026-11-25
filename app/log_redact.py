@@ -1,6 +1,6 @@
 """Strip personal and secret data from log text before it leaves the install.
 
-The Status page's Download logs button returns this, and customers send that
+The Diagnostics page's Download log button returns this, and customers send that
 file to support. Old lines stay in bridge-bank.log (and .log.1) after an
 update, so this has to catch what earlier versions logged too: account and
 transaction objects as JSON or as Python dicts, nested or not.

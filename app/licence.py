@@ -5,7 +5,7 @@ import subprocess
 import platform
 import logging
 import uuid
-from . import db
+from . import db, diag
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,12 @@ def get_machine_fingerprint():
     return _get_fingerprint()
 
 def _post_json(path, payload, timeout=10):
-    resp = requests.post(LICENCE_BASE + path, json=payload, timeout=timeout)
+    try:
+        resp = requests.post(LICENCE_BASE + path, json=payload, timeout=timeout)
+    except requests.RequestException as e:
+        diag.detail("License", f"POST {path}: no answer ({type(e).__name__})")
+        raise
+    diag.detail("License", f"POST {path}: HTTP {resp.status_code}")
     try:
         data = resp.json()
     except ValueError:
@@ -102,19 +107,23 @@ def activate(key, replace_others=False):
     try:
         resp, data = _post_json("/activate", payload)
         if resp.status_code in (200, 201) and data.get("valid"):
+            diag.note("License", "Activated on this machine" + (", other machines released" if replace_others else ""))
             db.set_setting("licence_key", key)
             if data.get("removed_activations"):
                 logger.info("Released %s activation(s) and %s bank slot(s) from previous installations",
                             data.get("removed_activations"), data.get("removed_seats"))
             return {"valid": True, "error": None}
         elif resp.status_code == 409:
+            diag.problem("License", "Activation refused (HTTP 409), every machine slot is taken")
             msg = data.get("error") or "Activation limit reached for this license."
             return {"valid": False, "error": msg, "limit_reached": bool(data.get("limit_reached"))}
         else:
+            diag.problem("License", f"Activation refused (HTTP {resp.status_code})")
             msg = data.get("error") or "Invalid license key."
             return {"valid": False, "error": msg}
     except requests.RequestException as e:
         logger.warning("License activate failed (network): %s", e)
+        diag.problem("License", f"Activation: license server not reachable ({type(e).__name__})")
         # Allow offline only if this key was previously activated successfully
         if db.get_setting("licence_key") == key:
             return {"valid": True, "error": None, "offline": True}
@@ -131,6 +140,8 @@ def deactivate():
             "/deactivate",
             {"license_key": key, "machine_fingerprint": fp},
         )
+        diag.note("License", f"Deactivated on this machine (HTTP {resp.status_code})" if resp.status_code == 200
+                  else f"Deactivation refused (HTTP {resp.status_code})")
         if resp.status_code == 200:
             db.set_setting("licence_key", "")
             db.set_setting("license_instance_id", "")
@@ -157,20 +168,27 @@ def validate(key=None):
         )
         if resp.status_code == 200 and data.get("valid"):
             db.set_setting("licence_validated", "1")
+            diag.note_change("licence-check", "License", "Check: valid")
             return {"valid": True, "error": None}
         else:
             # Fingerprint may have changed after update — try re-activating
             reactivation = activate(key)
             if reactivation.get("valid"):
                 db.set_setting("licence_validated", "1")
+                diag.note_change("licence-check", "License", "Check: valid after activating again")
                 return {"valid": True, "error": None}
+            diag.note_change("licence-check", "Error", f"License: check refused (HTTP {resp.status_code})")
             msg = data.get("error") or "Invalid license key."
             return {"valid": False, "error": msg}
     except requests.RequestException as e:
         logger.warning("License check failed (network): %s", e)
         # Allow offline if this key was previously activated and validated
         if db.get_setting("licence_key") and db.get_setting("licence_validated"):
+            diag.note_change("licence-check", "License",
+                             f"Check: license server not reachable ({type(e).__name__}), working offline")
             return {"valid": True, "error": None, "offline": True}
+        diag.note_change("licence-check", "Error",
+                         f"License: license server not reachable ({type(e).__name__})")
         return {"valid": False, "error": "Could not reach the license server. Check your internet connection."}
 
 def get_activation_info():
@@ -261,6 +279,8 @@ def sync_bank_seats(accounts, key=None):
                 "limit": data.get("limit"),
                 "other_machine_seats": data.get("other_machine_seats", 0),
             }
+        diag.problem("License", f"Bank slots refused (HTTP {resp.status_code}), "
+                                f"{data.get('used')} of {data.get('limit')} in use")
         return {
             "ok": False,
             "error": data.get("error") or "Could not verify bank slots for this license.",
@@ -293,6 +313,8 @@ def deactivate_other_machines(key=None):
     try:
         resp, data = _post_json("/deactivate-others", payload)
         if resp.status_code == 200:
+            diag.note("License", f"Released {data.get('removed_activations', 0)} other machines and "
+                                 f"{data.get('removed_seats', 0)} bank slots")
             logger.info("Released %s seat(s) and %s activation(s) from other installations",
                         data.get("removed_seats"), data.get("removed_activations"))
             return {

@@ -286,6 +286,32 @@ label.set-row { cursor: pointer; }
   .ov .acts form { margin: 0 auto; }
   .ov .acts .btn { flex: 1 1 auto; }
 }
+/* =================================================================
+   Diagnostics page: facts, detailed-log switches and the log
+   ================================================================= */
+.page-diagnostics .dashboard-surface { max-width: 900px; }
+.ov.diag .facts { padding: 0 20px 16px; }
+.ov.diag .facts .set-row span:last-child { color: var(--text-2); text-align: right; overflow-wrap: anywhere; }
+.ov.diag .hint { font-size: 12.5px; color: var(--muted); padding: 0 20px 16px; }
+.ov.diag .head-note { font-weight: 500; color: var(--muted); font-size: 13px; }
+.ov.diag .sw-wrap { padding: 0 20px 14px; }
+.ov.diag .set-row small { font-size: 12px; }
+.ov.diag .log-acts { display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.ov.diag .text-btn:disabled { opacity: 0.6; cursor: default; }
+.ov.diag .logbar { display: flex; gap: 8px; align-items: center; padding: 0 20px 10px; }
+.ov.diag .logbar input { width: 220px; padding: 7px 10px; font-size: 13px; }
+.ov.diag .pills { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 20px 12px; }
+.ov.diag .pills button { font: inherit; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 99px; background: var(--card-2); color: var(--text-2); border: 1px solid var(--line); cursor: pointer; }
+.ov.diag .pills button:hover { color: var(--text); }
+.ov.diag .pills button.on { background: var(--accent); color: #fff; border-color: transparent; }
+.ov.diag .diaglog { font: 12px/1.6 ui-monospace, Menlo, monospace; color: var(--text); padding: 4px 20px 18px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 70vh; overflow-y: auto; contain: content; }
+.ov.diag .diaglog span { color: var(--muted); }
+.ov.diag .diaglog .err { color: #ffc9c9; }
+@media (max-width: 640px) {
+  .ov.diag .card-head { flex-wrap: wrap; }
+  .ov.diag .logbar input { width: 100%; }
+  .ov.diag .facts .set-row { align-items: flex-start; }
+}
 @media (prefers-reduced-motion: reduce) { .ov .rise, .ov .badge-ic::after, .ov .badge-ic svg path.draw { animation: none !important; stroke-dashoffset: 0; } }
 
 @media (prefers-reduced-motion: reduce) {

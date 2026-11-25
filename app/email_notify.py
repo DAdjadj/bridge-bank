@@ -6,7 +6,7 @@ import ssl
 import requests
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from . import config, email_design as design
+from . import config, diag, email_design as design
 
 logger = logging.getLogger(__name__)
 
@@ -94,26 +94,39 @@ def build_message(subject: str, body: str, html: str = None, sender: str = "", t
     return mime
 
 
+def _kind(subject: str) -> str:
+    """'Bridge Bank: sync failed' -> 'sync failed', for the Diagnostics page."""
+    return re.sub(r"^Bridge Bank:\s*", "", subject or "") or "email"
+
+
+def _answer_code(answer):
+    return answer[0] if isinstance(answer, tuple) and answer else "?"
+
+
 def send(subject: str, body: str, raise_on_error: bool = False, html: str = None):
     smtp_auth = _as_bool(config.SMTP_AUTH, True)
     sender = config.SMTP_FROM or config.SMTP_USER
     host = _smtp_host()
     if not config.NOTIFY_EMAIL or not sender or not host:
         msg = "SMTP settings not configured. Set up notifications in the Bridge Bank web UI."
+        diag.note("Email", f"Not sent ({_kind(subject)}): email isn't set up")
         if raise_on_error:
             raise RuntimeError(msg)
         logger.warning("Email not sent (%s) — %s", subject, msg)
         return
     if smtp_auth and (not config.SMTP_USER or not config.SMTP_PASSWORD):
         msg = "SMTP credentials not configured. Set up notifications in the Bridge Bank web UI."
+        diag.note("Email", f"Not sent ({_kind(subject)}): no email login set up")
         if raise_on_error:
             raise RuntimeError(msg)
         logger.warning("Email not sent (%s) — %s", subject, msg)
         return
     if _is_unsubscribed(config.NOTIFY_EMAIL):
         logger.info("Skipping email for unsubscribed %s: %s", config.NOTIFY_EMAIL, subject)
+        diag.note("Email", f"Not sent ({_kind(subject)}): the address is unsubscribed")
         return
     mime = build_message(subject, body, html, sender, config.NOTIFY_EMAIL)
+    kind = _kind(subject)
     try:
         port = int(config.SMTP_PORT or 587)
         security = _smtp_security()
@@ -121,15 +134,23 @@ def send(subject: str, body: str, raise_on_error: bool = False, html: str = None
             smtp = smtplib.SMTP_SSL(host, port, context=_tls_context())
         else:
             smtp = smtplib.SMTP(host, port)
+        diag.detail("Email", f"Connected to the mail server (port {port}, {security})")
         with smtp as s:
             if security == "starttls":
-                s.starttls(context=_tls_context())
+                answer = s.starttls(context=_tls_context())
+                diag.detail("Email", f"STARTTLS answer {_answer_code(answer)}")
             if smtp_auth:
-                s.login(config.SMTP_USER, config.SMTP_PASSWORD)
-            s.sendmail(sender, config.NOTIFY_EMAIL, mime.as_string())
+                answer = s.login(config.SMTP_USER, config.SMTP_PASSWORD)
+                diag.detail("Email", f"Login answer {_answer_code(answer)}")
+            refused = s.sendmail(sender, config.NOTIFY_EMAIL, mime.as_string())
+            diag.detail("Email", "Message accepted" + (f", {len(refused)} recipients refused"
+                                                       if isinstance(refused, dict) and refused else ""))
         logger.info("Email sent: %s", subject)
+        diag.note("Email", f"Sent: {kind}")
     except Exception as e:
         logger.warning("Failed to send email: %s", e)
+        code = getattr(e, "smtp_code", None)
+        diag.problem("Email", f"Not sent ({kind}): {type(e).__name__}" + (f", SMTP {code}" if code else ""))
         if raise_on_error:
             raise RuntimeError(_friendly_smtp_error(e)) from e
 
@@ -264,7 +285,7 @@ def _account_rows(successes: list, errors: list):
 _TRY_STEPS = [
     "Open the Status page in Bridge Bank. Its sync log shows each step.",
     "If a bank asks to be re-authorized, click Re-authorize on the Bank page.",
-    f"Still stuck? Click Download logs on the Status page and send them to [{SUPPORT}](mailto:{SUPPORT}).",
+    f"Still stuck? Open Diagnostics in Bridge Bank, click Download log and send it to [{SUPPORT}](mailto:{SUPPORT}).",
 ]
 
 
